@@ -1,6 +1,6 @@
 # ============================================================
-# WEB-QR v18.0 — File-based session (fix đa worker)
-# Bot by Anh Khôi
+# WEB-QR v19.0 — Tạo QR Zalo (Bot by Anh Khôi)
+# Giao diện hiện đại — Hiệu ứng premium — Chạy 100%
 # ============================================================
 import os
 import io
@@ -18,20 +18,18 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 
 def sess_path(sid):
-    return os.path.join(DATA_DIR, f"{sid}.json")
+    return os.path.join(DATA_DIR, sid + ".json")
 
 
 def sess_save(sid, data):
-    """Lưu session vào file JSON."""
     try:
         with open(sess_path(sid), "w", encoding="utf-8") as f:
             json.dump(data, f)
     except Exception as e:
-        print(f"[SESS] Lỗi save: {e}")
+        print("[SESS] save error: " + str(e))
 
 
 def sess_load(sid):
-    """Đọc session từ file."""
     try:
         with open(sess_path(sid), "r", encoding="utf-8") as f:
             return json.load(f)
@@ -88,7 +86,6 @@ class ZaloQR:
             )
             await asyncio.sleep(3)
 
-            # Chuyển sang tab QR
             try:
                 btn = await page.wait_for_selector(
                     "text=/QR|Quét mã/i", timeout=5000
@@ -100,7 +97,6 @@ class ZaloQR:
 
             await asyncio.sleep(3)
 
-            # Chụp QR
             png = await page.screenshot(full_page=False)
             try:
                 from PIL import Image
@@ -117,12 +113,10 @@ class ZaloQR:
             except Exception:
                 pass
 
-            # Lưu PNG ra file
-            png_path = os.path.join(DATA_DIR, f"{session_id}.png")
+            png_path = os.path.join(DATA_DIR, session_id + ".png")
             with open(png_path, "wb") as f:
                 f.write(png)
 
-            # Lưu session vào file
             sess_save(session_id, {
                 "status": "waiting",
                 "created_at": time.time(),
@@ -131,16 +125,15 @@ class ZaloQR:
                 "imei": None,
             })
 
-            print(f"[QR] Session {session_id} - Đã có QR")
+            print("[QR] Session " + session_id + " ready")
 
-            # Poll login
             threading.Thread(
                 target=lambda: asyncio.run(self._poll(page, session_id)),
                 daemon=True,
             ).start()
 
         except Exception as e:
-            print(f"[QR] Lỗi create_qr: {e}")
+            print("[QR] error: " + str(e))
             sess_save(session_id, {
                 "status": "error",
                 "error": str(e),
@@ -162,7 +155,7 @@ class ZaloQR:
         data = sess_load(session_id) or {}
         data["status"] = "expired"
         sess_save(session_id, data)
-        await self._close(session_id)
+        await self._close()
 
     async def _extract(self, session_id, page):
         try:
@@ -174,30 +167,30 @@ class ZaloQR:
                     ck[c["name"]] = c["value"]
 
             imei = ""
-            for k in ["imei", "zpw_imei_s", "device_id"]:
+            for k in ["imei", "zpw_imei", "device_id"]:
                 try:
-                    vave = await page.evaluate(f"localStorage.getItem('{(sk}')")
+                    v = await page.evaluate("localStorage.getItem('" + k + "')")
                     if v:
-                        imeiession = v
+                        imei = v
                         break
                 except Exception:
-                    pass_id
+                    pass
 
             data = sess_load(session_id) or {}
             data["status"] = "done"
             data["cookies"] = ck
-            data["imei"] = imei, or "000000000000000"
-            sess data)
+            data["imei"] = imei or "000000000000000"
+            sess_save(session_id, data)
 
-            print(f"[QR] Session {session_id} - DONE")
-            await self._close(session_id)
+            print("[QR] Session " + session_id + " DONE")
+            await self._close()
         except Exception as e:
             data = sess_load(session_id) or {}
             data["status"] = "error"
             data["error"] = str(e)
             sess_save(session_id, data)
 
-    async def _close(self, session_id):
+    async def _close(self):
         try:
             if self.browser:
                 await self.browser.close()
@@ -214,7 +207,6 @@ class ZaloQR:
 def api_qr_create():
     session_id = uuid.uuid4().hex[:16]
 
-    # Tạo session rỗng trước để tránh race condition
     sess_save(session_id, {
         "status": "creating",
         "created_at": time.time(),
@@ -229,7 +221,6 @@ def api_qr_create():
 
     threading.Thread(target=run, daemon=True).start()
 
-    # Đợi QR render xong
     start = time.time()
     while time.time() - start < 40:
         data = sess_load(session_id)
@@ -240,7 +231,7 @@ def api_qr_create():
     return jsonify({
         "ok": True,
         "session_id": session_id,
-        "qr_url": f"/qr/{session_id}",
+        "qr_url": "/qr/" + session_id,
         "ttl": QR_TTL,
     })
 
@@ -284,66 +275,195 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "service": "web-qr", "version": "18.0"})
+    return jsonify({"status": "ok", "service": "web-qr", "version": "19.0"})
 
 
 # ============================================================
-# HTML
+# HTML — TRANG CHỦ (SIÊU ĐẸP)
 # ============================================================
-HTML_HOME = """
-<!DOCTYPE html>
+HTML_HOME = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Tạo QR Zalo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Tạo QR Zalo — ALB Forge</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'Inter',sans-serif; min-height:100vh; min-height:100dvh; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#f093fb,#f5576c); padding:20px; }
-.card { background:white; padding:50px 40px; border-radius:32px; box-shadow:0 30px 80px rgba(0,0,0,0.3); text-align:center; max-width:520px; width:100%; }
-.logo { width:90px; height:90px; border-radius:28px; background:linear-gradient(135deg,#f093fb,#f5576c); display:flex; align-items:center; justify-content:center; font-size:48px; margin:0 auto 24px; box-shadow:0 20px 50px rgba(245,87,108,0.5); }
-h1 { color:#1a1a2e; margin-bottom:12px; font-size:28px; font-weight:900; }
-p.sub { color:#6b7280; margin-bottom:32px; font-size:15px; }
-button { width:100%; padding:20px; border:none; border-radius:20px; background:linear-gradient(135deg,#f093fb,#f5576c); color:white; font-size:18px; font-weight:900; font-family:inherit; cursor:pointer; box-shadow:0 15px 40px rgba(245,87,108,0.45); }
-button:hover { transform:translateY(-4px); }
-button:disabled { opacity:0.6; cursor:wait; }
-.steps { margin-top:32px; text-align:left; background:#f9fafb; padding:20px; border-radius:16px; font-size:14px; color:#374151; line-height:1.9; }
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+body {
+    font-family:'Inter',sans-serif;
+    min-height:100vh; min-height:100dvh;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(-45deg,#667eea,#764ba2,#f093fb,#f5576c);
+    background-size:400% 400%;
+    animation:gradientShift 15s ease infinite;
+    padding:20px; overflow:hidden;
+    position:relative;
+}
+@keyframes gradientShift {
+    0% { background-position:0% 50%; }
+    50% { background-position:100% 50%; }
+    100% { background-position:0% 50%; }
+}
+
+/* Floating orbs */
+.orb {
+    position:fixed; border-radius:50%;
+    background:radial-gradient(circle,rgba(255,255,255,0.15),transparent 70%);
+    pointer-events:none; z-index:0;
+}
+.orb1 { width:400px; height:400px; top:-100px; left:-100px; animation:float1 20s ease-in-out infinite; }
+.orb2 { width:300px; height:300px; bottom:-80px; right:-80px; animation:float2 15s ease-in-out infinite; }
+.orb3 { width:200px; height:200px; top:50%; left:80%; animation:float3 18s ease-in-out infinite; }
+@keyframes float1 { 0%,100% { transform:translate(0,0); } 50% { transform:translate(60px,40px); } }
+@keyframes float2 { 0%,100% { transform:translate(0,0); } 50% { transform:translate(-50px,-60px); } }
+@keyframes float3 { 0%,100% { transform:translate(0,0); } 50% { transform:translate(-30px,80px); } }
+
+.card {
+    background:rgba(255,255,255,0.98);
+    backdrop-filter:blur(30px) saturate(180%);
+    -webkit-backdrop-filter:blur(30px) saturate(180%);
+    padding:56px 44px; border-radius:36px;
+    box-shadow:
+        0 40px 100px rgba(0,0,0,0.35),
+        0 0 0 1px rgba(255,255,255,0.6),
+        inset 0 1px 0 rgba(255,255,255,0.9);
+    text-align:center; max-width:540px; width:100%;
+    position:relative; z-index:1;
+    animation:cardIn 0.9s cubic-bezier(0.16,1,0.3,1);
+}
+@keyframes cardIn {
+    from { opacity:0; transform:translateY(60px) scale(0.94); }
+    to { opacity:1; transform:translateY(0) scale(1); }
+}
+
+.logo {
+    width:104px; height:104px; border-radius:32px;
+    background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);
+    display:flex; align-items:center; justify-content:center;
+    font-size:56px; margin:0 auto 28px;
+    box-shadow:
+        0 25px 60px rgba(245,87,108,0.55),
+        inset 0 -4px 20px rgba(0,0,0,0.15),
+        inset 0 4px 20px rgba(255,255,255,0.4);
+    animation:logoFloat 3.5s ease-in-out infinite;
+    position:relative;
+}
+.logo::after {
+    content:'';
+    position:absolute; inset:0;
+    border-radius:32px;
+    background:linear-gradient(135deg,rgba(255,255,255,0.4),transparent 50%);
+    pointer-events:none;
+}
+@keyframes logoFloat {
+    0%,100% { transform:translateY(0) rotate(0deg); }
+    50% { transform:translateY(-12px) rotate(-3deg); }
+}
+
+h1 {
+    color:#1a1a2e; margin-bottom:14px;
+    font-size:32px; font-weight:900;
+    letter-spacing:-1px;
+    background:linear-gradient(135deg,#667eea,#764ba2,#f5576c);
+    -webkit-background-clip:text;
+    -webkit-text-fill-color:transparent;
+    background-clip:text;
+}
+p.sub { color:#6b7280; margin-bottom:36px; font-size:16px; font-weight:500; }
+
+.btn-start {
+    width:100%; padding:22px; border:none; border-radius:22px;
+    background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);
+    color:white; font-size:19px; font-weight:900;
+    font-family:inherit; cursor:pointer;
+    box-shadow:
+        0 20px 50px rgba(245,87,108,0.5),
+        inset 0 -3px 15px rgba(0,0,0,0.15),
+        inset 0 3px 15px rgba(255,255,255,0.25);
+    transition:all 0.35s cubic-bezier(0.16,1,0.3,1);
+    position:relative; overflow:hidden;
+    letter-spacing:0.3px;
+}
+.btn-start::before {
+    content:'';
+    position:absolute; inset:0;
+    background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,0.5),transparent 70%);
+    transform:translateX(-100%);
+    transition:transform 0.8s;
+}
+.btn-start:hover::before { transform:translateX(100%); }
+.btn-start:hover {
+    transform:translateY(-5px) scale(1.02);
+    box-shadow:0 28px 65px rgba(245,87,108,0.65);
+}
+.btn-start:active { transform:translateY(-2px) scale(0.99); }
+.btn-start:disabled { opacity:0.7; cursor:wait; }
+
+.steps {
+    margin-top:36px; text-align:left;
+    background:linear-gradient(135deg,#f9fafb,#f3f4f6);
+    padding:24px; border-radius:20px;
+    font-size:14px; color:#374151;
+    line-height:2; border:1px solid #e5e7eb;
+}
+.steps-title {
+    font-weight:900; color:#667eea;
+    font-size:13px; text-transform:uppercase;
+    letter-spacing:1px; margin-bottom:14px;
+}
+.step-row { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+.step-num {
+    width:26px; height:26px; border-radius:50%;
+    background:linear-gradient(135deg,#667eea,#764ba2);
+    color:white; font-weight:900; font-size:12px;
+    display:flex; align-items:center; justify-content:center;
+    flex-shrink:0;
+    box-shadow:0 4px 10px rgba(102,126,234,0.4);
+}
 </style>
 </head>
 <body>
+<div class="orb orb1"></div>
+<div class="orb orb2"></div>
+<div class="orb orb3"></div>
+
 <div class="card">
     <div class="logo">📱</div>
     <h1>Tạo mã QR Zalo</h1>
     <p class="sub">Quét QR để lấy IMEI + Cookie</p>
-    <button id="btn-start" onclick="startQR()">🚀 TẠO MÃ QR</button>
+    <button id="btn-start" class="btn-start" onclick="startQR()">
+        🚀 TẠO MÃ QR
+    </button>
     <div class="steps">
-        <b>Hướng dẫn:</b><br>
-        1️⃣ Bấm nút trên<br>
-        2️⃣ Đợi 15-30 giây → hiện mã QR<br>
-        3️⃣ Mở app Zalo → QR → Quét mã<br>
-        4️⃣ Copy IMEI + Cookie
+        <div class="steps-title">Hướng dẫn nhanh</div>
+        <div class="step-row"><div class="step-num">1</div><div>Bấm nút "Tạo mã QR" ở trên</div></div>
+        <div class="step-row"><div class="step-num">2</div><div>Đợi 15-30 giây → hiện mã QR</div></div>
+        <div class="step-row"><div class="step-num">3</div><div>Mở app Zalo → QR → Quét mã</div></div>
+        <div class="step-row"><div class="step-num">4</div><div>Copy IMEI + Cookie sang web spam</div></div>
     </div>
 </div>
+
 <script>
 async function startQR() {
     const btn = document.getElementById('btn-start');
     btn.disabled = true;
-    btn.textContent = '⏳ Đang tạo QR... (15-30s)';
+    btn.innerHTML = '⏳ ĐANG TẠO QR... (15-30s)';
     try {
         const r = await fetch('/api/qr/create', { method: 'POST' });
         const d = await r.json();
         if (d.ok) {
-            window.location.href = d.qr_url;
+            btn.innerHTML = '✅ XONG! ĐANG CHUYỂN TRANG...';
+            setTimeout(() => { window.location.href = d.qr_url; }, 300);
         } else {
             alert('Lỗi: ' + (d.error || 'Không rõ'));
             btn.disabled = false;
-            btn.textContent = '🚀 TẠO MÃ QR';
+            btn.innerHTML = '🚀 TẠO MÃ QR';
         }
     } catch (e) {
         alert('Lỗi: ' + e.message);
         btn.disabled = false;
-        btn.textContent = '🚀 TẠO MÃ QR';
+        btn.innerHTML = '🚀 TẠO MÃ QR';
     }
 }
 </script>
@@ -352,95 +472,395 @@ async function startQR() {
 """
 
 
-HTML_QR = """
-<!DOCTYPE html>
+# ============================================================
+# HTML — TRANG QR (SIÊU ĐẸP)
+# ============================================================
+HTML_QR = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Quét QR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Quét QR — ALB Forge</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'Inter',sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#f093fb,#f5576c); padding:20px; }
-.card { background:white; padding:36px; border-radius:32px; box-shadow:0 30px 80px rgba(0,0,0,0.3); text-align:center; max-width:560px; width:100%; }
-h1 { color:#1a1a2e; margin-bottom:8px; font-size:24px; font-weight:900; }
-p.sub { color:#6b7280; margin-bottom:24px; font-size:14px; }
-.qr-box { background:#f9fafb; padding:24px; border-radius:24px; margin-bottom:24px; border:2px dashed #e5e7eb; }
-.qr-box img { max-width:100%; border-radius:14px; display:block; margin:0 auto; }
-.status { padding:18px; border-radius:16px; font-size:15px; font-weight:800; }
-.status.waiting { background:#fef3c7; color:#92400e; }
-.status.error { background:#fee2e2; color:#991b1b; }
-.status.expired { background:#f3f4f6; color:#374151; }
-.result { text-align:left; padding:16px; border-radius:16px; background:linear-gradient(135deg,#d1fae5,#a7f3d0); margin-bottom:12px; }
-.result .label { font-size:11px; color:#065f46; text-transform:uppercase; font-weight:900; margin-bottom:6px; }
-.result .value { font-family:monospace; font-size:13px; color:#065f46; word-break:break-all; line-height:1.5; }
-.result .value.scroll { max-height:180px; overflow-y:auto; background:rgba(255,255,255,0.5); padding:10px; border-radius:8px; }
-.copy-btn { width:100%; padding:16px; border:none; border-radius:14px; background:linear-gradient(135deg,#667eea,#764ba2); color:white; font-size:15px; font-weight:900; cursor:pointer; margin-top:10px; }
-.copy-btn.green { background:linear-gradient(135deg,#10b981,#059669); }
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+body {
+    font-family:'Inter',sans-serif;
+    min-height:100vh; min-height:100dvh;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(-45deg,#667eea,#764ba2,#f093fb,#f5576c);
+    background-size:400% 400%;
+    animation:gradientShift 15s ease infinite;
+    padding:20px; overflow-x:hidden;
+}
+@keyframes gradientShift {
+    0% { background-position:0% 50%; }
+    50% { background-position:100% 50%; }
+    100% { background-position:0% 50%; }
+}
+
+.orb {
+    position:fixed; border-radius:50%;
+    background:radial-gradient(circle,rgba(255,255,255,0.15),transparent 70%);
+    pointer-events:none; z-index:0;
+}
+.orb1 { width:400px; height:400px; top:-100px; left:-100px; animation:float1 20s ease-in-out infinite; }
+.orb2 { width:300px; height:300px; bottom:-80px; right:-80px; animation:float2 15s ease-in-out infinite; }
+@keyframes float1 { 0%,100% { transform:translate(0,0); } 50% { transform:translate(60px,40px); } }
+@keyframes float2 { 0%,100% { transform:translate(0,0); } 50% { transform:translate(-50px,-60px); } }
+
+.card {
+    background:rgba(255,255,255,0.98);
+    backdrop-filter:blur(30px) saturate(180%);
+    -webkit-backdrop-filter:blur(30px) saturate(180%);
+    padding:40px 32px; border-radius:36px;
+    box-shadow:
+        0 40px 100px rgba(0,0,0,0.35),
+        0 0 0 1px rgba(255,255,255,0.6);
+    text-align:center; max-width:580px; width:100%;
+    position:relative; z-index:1;
+    animation:cardIn 0.8s cubic-bezier(0.16,1,0.3,1);
+}
+@keyframes cardIn {
+    from { opacity:0; transform:translateY(50px) scale(0.94); }
+    to { opacity:1; transform:translateY(0) scale(1); }
+}
+
+h1 {
+    color:#1a1a2e; margin-bottom:10px;
+    font-size:26px; font-weight:900;
+    letter-spacing:-0.6px;
+}
+p.sub { color:#6b7280; margin-bottom:26px; font-size:14px; font-weight:600; }
+
+.qr-box {
+    background:linear-gradient(135deg,#f9fafb,#f3f4f6);
+    padding:28px; border-radius:28px;
+    margin-bottom:26px;
+    border:2px dashed #cbd5e1;
+    position:relative;
+    box-shadow:inset 0 4px 20px rgba(0,0,0,0.03);
+    transition:all 0.4s;
+}
+.qr-box::before {
+    content:'';
+    position:absolute; inset:-2px;
+    border-radius:28px;
+    background:linear-gradient(135deg,#f093fb,#f5576c);
+    z-index:-1;
+    opacity:0.4;
+    filter:blur(15px);
+    animation:pulseGlow 3s ease-in-out infinite;
+}
+@keyframes pulseGlow {
+    0%,100% { opacity:0.4; }
+    50% { opacity:0.7; }
+}
+.qr-box img {
+    max-width:100%; border-radius:16px;
+    display:block; margin:0 auto;
+    box-shadow:0 10px 30px rgba(0,0,0,0.1);
+    background:white;
+}
+
+.status {
+    padding:20px; border-radius:18px;
+    font-size:15px; font-weight:800;
+    display:flex; align-items:center; justify-content:center; gap:12px;
+    transition:all 0.4s cubic-bezier(0.16,1,0.3,1);
+}
+.status.waiting {
+    background:linear-gradient(135deg,#fef3c7,#fde68a);
+    color:#92400e;
+    animation:waitingPulse 2s ease-in-out infinite;
+}
+@keyframes waitingPulse {
+    0%,100% { transform:scale(1); box-shadow:0 0 0 0 rgba(251,191,36,0.5); }
+    50% { transform:scale(1.01); box-shadow:0 0 0 12px rgba(251,191,36,0); }
+}
+.status.error { background:linear-gradient(135deg,#fee2e2,#fecaca); color:#991b1b; }
+.status.expired { background:linear-gradient(135deg,#f3f4f6,#e5e7eb); color:#374151; }
+
+/* RESULT */
+.result-wrap {
+    text-align:left;
+    animation:resultIn 0.6s cubic-bezier(0.16,1,0.3,1);
+}
+@keyframes resultIn {
+    from { opacity:0; transform:translateY(20px); }
+    to { opacity:1; transform:translateY(0); }
+}
+
+.success-header {
+    text-align:center; padding:22px;
+    background:linear-gradient(135deg,#d1fae5,#a7f3d0);
+    border-radius:22px; margin-bottom:20px;
+    position:relative; overflow:hidden;
+}
+.success-header::before {
+    content:'';
+    position:absolute; inset:0;
+    background:linear-gradient(120deg,transparent,rgba(255,255,255,0.6),transparent);
+    transform:translateX(-100%);
+    animation:shimmer 2.5s ease-in-out infinite;
+}
+@keyframes shimmer {
+    0% { transform:translateX(-100%); }
+    50%,100% { transform:translateX(100%); }
+}
+.success-icon {
+    font-size:56px; line-height:1;
+    margin-bottom:8px;
+    animation:successBounce 0.8s cubic-bezier(0.16,1,0.3,1);
+}
+@keyframes successBounce {
+    0% { transform:scale(0); }
+    60% { transform:scale(1.2); }
+    100% { transform:scale(1); }
+}
+.success-title {
+    font-size:20px; font-weight:900;
+    color:#065f46; letter-spacing:-0.3px;
+}
+
+.result {
+    padding:18px; border-radius:18px;
+    background:linear-gradient(135deg,#ecfdf5,#d1fae5);
+    margin-bottom:14px;
+    border:1px solid #a7f3d0;
+    position:relative;
+}
+.result .label {
+    font-size:11px; color:#065f46;
+    text-transform:uppercase; font-weight:900;
+    letter-spacing:1px; margin-bottom:8px;
+    display:flex; align-items:center; gap:6px;
+}
+.result .value {
+    font-family:'SF Mono',Monaco,Consolas,monospace;
+    font-size:13px; color:#065f46;
+    word-break:break-all; line-height:1.6;
+    font-weight:600;
+}
+.result .value.scroll {
+    max-height:200px; overflow-y:auto;
+    background:rgba(255,255,255,0.6);
+    padding:12px; border-radius:10px;
+    margin-top:8px;
+}
+.result .value.scroll::-webkit-scrollbar { width:6px; }
+.result .value.scroll::-webkit-scrollbar-thumb {
+    background:#a7f3d0; border-radius:3px;
+}
+
+.copy-btn {
+    width:100%; padding:18px; border:none;
+    border-radius:16px;
+    background:linear-gradient(135deg,#667eea,#764ba2);
+    color:white; font-size:16px; font-weight:900;
+    font-family:inherit; cursor:pointer;
+    margin-top:10px;
+    box-shadow:
+        0 12px 30px rgba(102,126,234,0.4),
+        inset 0 -3px 12px rgba(0,0,0,0.1),
+        inset 0 3px 12px rgba(255,255,255,0.2);
+    transition:all 0.3s cubic-bezier(0.16,1,0.3,1);
+    position:relative; overflow:hidden;
+}
+.copy-btn::before {
+    content:'';
+    position:absolute; inset:0;
+    background:linear-gradient(120deg,transparent,rgba(255,255,255,0.4),transparent);
+    transform:translateX(-100%);
+    transition:transform 0.6s;
+}
+.copy-btn:hover::before { transform:translateX(100%); }
+.copy-btn:hover { transform:translateY(-3px); box-shadow:0 18px 40px rgba(102,126,234,0.55); }
+.copy-btn:active { transform:translateY(-1px); }
+
+.copy-btn.green {
+    background:linear-gradient(135deg,#10b981,#059669);
+    box-shadow:0 12px 30px rgba(16,185,129,0.4);
+}
+.copy-btn.green:hover { box-shadow:0 18px 40px rgba(16,185,129,0.55); }
+
+.copy-btn.purple {
+    background:linear-gradient(135deg,#8b5cf6,#7c3aed);
+    box-shadow:0 12px 30px rgba(139,92,246,0.4);
+}
+
+.copy-btn.blue {
+    background:linear-gradient(135deg,#3b82f6,#2563eb);
+    box-shadow:0 12px 30px rgba(59,130,246,0.4);
+}
+
+.hint {
+    margin-top:14px; font-size:12px;
+    color:#6b7280; text-align:center;
+    font-weight:600; line-height:1.6;
+}
+
+/* Toast */
+.toast {
+    position:fixed; bottom:30px; left:50%;
+    transform:translateX(-50%);
+    background:linear-gradient(135deg,#10b981,#059669);
+    color:white; padding:16px 32px;
+    border-radius:50px; font-weight:900;
+    font-size:15px;
+    box-shadow:0 20px 50px rgba(16,185,129,0.6);
+    z-index:9999;
+    animation:toastIn 0.4s cubic-bezier(0.16,1,0.3,1);
+    display:flex; align-items:center; gap:10px;
+}
+@keyframes toastIn {
+    from { opacity:0; transform:translateX(-50%) translateY(40px) scale(0.8); }
+    to { opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
+}
+.toast.out {
+    animation:toastOut 0.3s ease forwards;
+}
+@keyframes toastOut {
+    to { opacity:0; transform:translateX(-50%) translateY(30px) scale(0.9); }
+}
+
+@media (max-width:640px) {
+    .card { padding:30px 22px; border-radius:28px; }
+    h1 { font-size:22px; }
+    .qr-box { padding:20px; }
+    .success-icon { font-size:48px; }
+    .success-title { font-size:18px; }
+    .result .value { font-size:12px; }
+}
 </style>
 </head>
 <body>
+<div class="orb orb1"></div>
+<div class="orb orb2"></div>
+
 <div class="card">
     <h1>📱 Quét QR Zalo</h1>
     <p class="sub">Mở app Zalo → QR → Quét mã bên dưới</p>
-    <div class="qr-box" id="qr-box"><img src="/qr-image/{{ session_id }}" alt="QR"></div>
-    <div id="status" class="status waiting">⏳ Đang chờ quét...</div>
+    <div class="qr-box" id="qr-box">
+        <img src="/qr-image/{{ session_id }}" alt="QR">
+    </div>
+    <div id="status" class="status waiting">
+        <span style="font-size:20px;">⏳</span>
+        <span>Đang chờ quét...</span>
+    </div>
 </div>
+
 <script>
 const sessionId = "{{ session_id }}";
 let done = false;
+
 async function check() {
     if (done) return;
     try {
-        const r = await fetch(`/api/qr/status/${sessionId}`);
+        const r = await fetch('/api/qr/status/' + sessionId);
         const d = await r.json();
         const el = document.getElementById('status');
+
         if (d.status === 'waiting' || d.status === 'creating') {
             el.className = 'status waiting';
-            el.textContent = '⏳ Đang chờ quét...';
+            el.innerHTML = '<span style="font-size:20px;">⏳</span><span>Đang chờ quét...</span>';
         } else if (d.status === 'done') {
             done = true;
             showResult(d);
         } else if (d.status === 'error') {
             el.className = 'status error';
-            el.textContent = '❌ ' + (d.error || 'Lỗi');
+            el.innerHTML = '<span style="font-size:20px;">❌</span><span>' + (d.error || 'Lỗi') + '</span>';
             done = true;
         } else if (d.status === 'expired') {
             el.className = 'status expired';
-            el.textContent = '⏰ QR hết hạn. Tạo lại.';
+            el.innerHTML = '<span style="font-size:20px;">⏰</span><span>QR hết hạn. Tạo lại.</span>';
             done = true;
         }
     } catch (e) {}
 }
+
+function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function showResult(d) {
     const imei = d.imei || '000000000000000';
     const cookies = d.cookies || {};
     const cookiesStr = JSON.stringify(cookies);
     const combo = imei + '|' + cookiesStr;
+
     document.getElementById('qr-box').style.display = 'none';
+
     const el = document.getElementById('status');
-    el.innerHTML = `
-        <div style="text-align:center; padding:16px; background:#d1fae5; border-radius:16px; margin-bottom:16px;">
-            <div style="font-size:44px;">✅</div>
-            <div style="font-size:18px; font-weight:900; color:#065f46;">Lấy cookie thành công!</div>
-        </div>
-        <div class="result">
-            <div class="label">📞 IMEI</div>
-            <div class="value">${imei}</div>
-        </div>
-        <div class="result">
-            <div class="label">🍪 COOKIE</div>
-            <div class="value scroll">${cookiesStr.replace(/</g,'&lt;')}</div>
-        </div>
-        <button class="copy-btn green" onclick="copyIt('${combo.replace(/'/g,"\\\\'")}')">📋 COPY IMEI + COOKIE</button>
-    `;
+    el.className = 'status';
+    el.style.padding = '0';
+    el.style.background = 'transparent';
+    el.innerHTML =
+        '<div class="result-wrap">' +
+            '<div class="success-header">' +
+                '<div class="success-icon">✅</div>' +
+                '<div class="success-title">Lấy cookie thành công!</div>' +
+            '</div>' +
+            '<div class="result">' +
+                '<div class="label">📞 IMEI</div>' +
+                '<div class="value" id="imei-val">' + escapeHtml(imei) + '</div>' +
+            '</div>' +
+            '<div class="result">' +
+                '<div class="label">🍪 COOKIE (JSON)</div>' +
+                '<div class="value scroll" id="ck-val">' + escapeHtml(cookiesStr) + '</div>' +
+            '</div>' +
+            '<button class="copy-btn green" id="copy-all">📋 COPY CẢ IMEI + COOKIE</button>' +
+            '<button class="copy-btn blue" id="copy-imei">📞 CHỈ COPY IMEI</button>' +
+            '<button class="copy-btn purple" id="copy-ck">🍪 CHỈ COPY COOKIE</button>' +
+            '<div class="hint">Sau khi copy → quay lại web spam → paste vào tab Tài khoản</div>' +
+        '</div>';
+
+    document.getElementById('copy-all').onclick = function() { copyText(combo); };
+    document.getElementById('copy-imei').onclick = function() { copyText(imei); };
+    document.getElementById('copy-ck').onclick = function() { copyText(cookiesStr); };
 }
-function copyIt(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        alert('✅ Đã copy!');
-    }).catch(() => prompt('Copy:', text));
+
+function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+            showToast('✅ Đã copy!');
+        }).catch(function() {
+            fallbackCopy(text);
+        });
+    } else {
+        fallbackCopy(text);
+    }
 }
+
+function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        showToast('✅ Đã copy!');
+    } catch (e) {
+        prompt('Copy thủ công:', text);
+    }
+    document.body.removeChild(ta);
+}
+
+function showToast(msg) {
+    const old = document.querySelector('.toast');
+    if (old) old.remove();
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.innerHTML = msg;
+    document.body.appendChild(t);
+    setTimeout(function() {
+        t.classList.add('out');
+        setTimeout(function() { t.remove(); }, 300);
+    }, 2000);
+}
+
 setInterval(check, 2000);
 check();
 </script>
@@ -449,36 +869,77 @@ check();
 """
 
 
-HTML_EXPIRED = """
-<!DOCTYPE html>
+# ============================================================
+# HTML — SESSION EXPIRED
+# ============================================================
+HTML_EXPIRED = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hết hạn</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Hết hạn — ALB Forge</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'Inter',sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#f093fb,#f5576c); padding:20px; }
-.card { background:white; padding:52px 40px; border-radius:32px; box-shadow:0 30px 80px rgba(0,0,0,0.3); text-align:center; max-width:500px; }
-.icon { font-size:72px; margin-bottom:24px; }
-h1 { color:#1a1a2e; margin-bottom:14px; font-size:26px; font-weight:900; }
-p { color:#6b7280; font-size:15px; margin-bottom:24px; }
-a { display:inline-block; padding:16px 32px; background:linear-gradient(135deg,#667eea,#764ba2); color:white; border-radius:14px; text-decoration:none; font-weight:900; }
+body {
+    font-family:'Inter',sans-serif;
+    min-height:100vh; min-height:100dvh;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(-45deg,#667eea,#764ba2,#f093fb,#f5576c);
+    background-size:400% 400%;
+    animation:gradientShift 15s ease infinite;
+    padding:20px;
+}
+@keyframes gradientShift {
+    0% { background-position:0% 50%; }
+    50% { background-position:100% 50%; }
+    100% { background-position:0% 50%; }
+}
+.card {
+    background:rgba(255,255,255,0.98);
+    padding:56px 44px; border-radius:36px;
+    box-shadow:0 40px 100px rgba(0,0,0,0.35);
+    text-align:center; max-width:520px;
+    animation:cardIn 0.8s cubic-bezier(0.16,1,0.3,1);
+}
+@keyframes cardIn {
+    from { opacity:0; transform:translateY(50px) scale(0.94); }
+    to { opacity:1; transform:translateY(0) scale(1); }
+}
+.icon { font-size:80px; margin-bottom:24px; animation:iconWobble 2s ease-in-out infinite; }
+@keyframes iconWobble {
+    0%,100% { transform:rotate(0deg); }
+    25% { transform:rotate(-8deg); }
+    75% { transform:rotate(8deg); }
+}
+h1 { color:#1a1a2e; margin-bottom:16px; font-size:28px; font-weight:900; letter-spacing:-0.5px; }
+p { color:#6b7280; font-size:15px; margin-bottom:28px; line-height:1.7; }
+a {
+    display:inline-block; padding:18px 40px;
+    background:linear-gradient(135deg,#667eea,#764ba2);
+    color:white; border-radius:18px;
+    text-decoration:none; font-weight:900; font-size:16px;
+    box-shadow:0 15px 40px rgba(102,126,234,0.5);
+    transition:all 0.3s cubic-bezier(0.16,1,0.3,1);
+}
+a:hover { transform:translateY(-3px); box-shadow:0 22px 55px rgba(102,126,234,0.65); }
 </style>
 </head>
 <body>
 <div class="card">
     <div class="icon">⏰</div>
     <h1>Session hết hạn</h1>
-    <p>Vui lòng tạo QR mới.</p>
-    <a href="/">🔄 Tạo mới</a>
+    <p>Session QR này đã hết hạn.<br>Vui lòng tạo mã QR mới.</p>
+    <a href="/">🔄 Tạo QR mới</a>
 </div>
 </body>
 </html>
 """
 
 
+# ============================================================
+# MAIN
+# ============================================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
