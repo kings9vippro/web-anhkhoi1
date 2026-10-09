@@ -1,6 +1,6 @@
 # ============================================================
-# WEB-QR v24.0 — Tạo QR Zalo (Bot by Anh Khôi)
-# Fix: QR tự cập nhật mỗi 25s + TTL 10 phút + Không auto reload
+# WEB-QR v25.0 — Tạo QR Zalo PC (Bot by Anh Khôi)
+# Dùng URL id.zalo.me — Giống Zalo PC thật
 # ============================================================
 import os
 import io
@@ -14,7 +14,7 @@ import string
 
 from flask import Flask, request, jsonify, render_template_string, Response
 
-QR_TTL = 600  # 10 phút
+QR_TTL = 600
 DATA_DIR = "/tmp/qr_sessions"
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -51,7 +51,7 @@ app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR LOGIN
+# ZALO QR LOGIN — DÙNG ZALO PC URL
 # ============================================================
 class ZaloQR:
     def __init__(self):
@@ -77,7 +77,8 @@ class ZaloQR:
         png = None
         try:
             qr_element = await page.query_selector(
-                "canvas, img[alt*='QR'], img[src*='qr'], [class*='qr-code'], [class*='qrcode']"
+                "canvas, img[alt*='QR'], img[src*='qr'], "
+                "[class*='qr-code'], [class*='qrcode'], [id*='qr']"
             )
             if qr_element:
                 png = await qr_element.screenshot()
@@ -92,8 +93,8 @@ class ZaloQR:
                 img = Image.open(io.BytesIO(full_png))
                 w, h = img.size
                 img = img.crop((
-                    int(w * 0.18), int(h * 0.22),
-                    int(w * 0.82), int(h * 0.78)
+                    int(w * 0.15), int(h * 0.20),
+                    int(w * 0.85), int(h * 0.80)
                 ))
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")
@@ -118,28 +119,34 @@ class ZaloQR:
                 locale="vi-VN",
             )
             page = await ctx.new_page()
+
+            # ===== ZALO PC URL — TỰ HIỆN QR =====
+            print("[QR] Mo trang Zalo PC: id.zalo.me/account")
             await page.goto(
-                "https://chat.zalo.me/",
+                "https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me%2F",
                 wait_until="networkidle",
                 timeout=60000,
             )
 
-            await asyncio.sleep(8)
+            # Đợi QR render
+            await asyncio.sleep(10)
 
-            # Click tab QR
+            # Đợi element QR xuất hiện
             try:
-                btn = await page.wait_for_selector(
-                    "text=/QR|Quét mã/i", timeout=20000
+                await page.wait_for_selector(
+                    "canvas, [class*='qr'], [id*='qr']",
+                    timeout=20000
                 )
-                await btn.click()
-                print("[QR] Da click tab QR")
+                print("[QR] QR element da xuat hien")
             except Exception as e:
-                print("[QR] Khong thay tab QR: " + str(e))
+                print("[QR] Khong thay QR: " + str(e))
 
-            await asyncio.sleep(6)
+            await asyncio.sleep(3)
 
-            # Chụp QR lần đầu
+            # Chụp QR
             png = await self._capture_qr(page)
+            if not png:
+                raise Exception("Không chụp được QR")
 
             png_path = os.path.join(DATA_DIR, session_id + ".png")
             with open(png_path, "wb") as f:
@@ -154,7 +161,7 @@ class ZaloQR:
                 "qr_version": int(time.time()),
             })
 
-            print("[QR] Session " + session_id + " ready")
+            print("[QR] Session " + session_id + " ready - Cho user quet")
 
             ACTIVE_PAGES[session_id] = {
                 "page": page,
@@ -177,11 +184,10 @@ class ZaloQR:
 
     async def _poll(self, page, session_id):
         """
-        Poll cookie LIÊN TỤC + cập nhật QR mỗi 25s.
-        KHÔNG auto reload — không làm QR cũ mất.
+        Poll cookie + URL liên tục.
+        Sau khi quét + đồng ý → Zalo PC tự login → cookie zpw_sek xuất hiện.
         """
         start = time.time()
-        last_qr_update = time.time()
         check_count = 0
 
         while time.time() - start < QR_TTL:
@@ -199,39 +205,18 @@ class ZaloQR:
                           " | cookies: " + str(len(ck_dict)) +
                           " | has_zpw_sek: " + str("zpw_sek" in ck_dict))
 
-                # ===== PHÁT HIỆN COOKIE =====
+                # ===== PHÁT HIỆN COOKIE ZPW_SEK =====
                 if ck_dict.get("zpw_sek"):
-                    print("[QR] Phat hien zpw_sek")
+                    print("[QR] ✅ PHAT HIEN ZPW_SEK - Dang nhap thanh cong!")
                     await asyncio.sleep(3)
                     return await self._extract(session_id, page)
 
                 # ===== CHECK URL =====
                 url = page.url
-                if ("chat.zalo.me" in url and "/login" not in url
-                        and "qr" not in url.lower()):
-                    print("[QR] URL doi: " + url)
-                    await asyncio.sleep(3)
+                if "chat.zalo.me" in url and "id.zalo.me" not in url:
+                    print("[QR] URL doi sang chat.zalo.me: " + url)
+                    await asyncio.sleep(5)
                     return await self._extract(session_id, page)
-
-                # ===== CẬP NHẬT QR MỖI 25s =====
-                if time.time() - last_qr_update > 25:
-                    print("[QR] Cap nhat QR moi")
-                    try:
-                        new_png = await self._capture_qr(page)
-                        if new_png:
-                            png_path = os.path.join(DATA_DIR, session_id + ".png")
-                            with open(png_path, "wb") as f:
-                                f.write(new_png)
-
-                            data = sess_load(session_id) or {}
-                            data["qr_version"] = int(time.time())
-                            sess_save(session_id, data)
-
-                            last_qr_update = time.time()
-                            print("[QR] Da cap nhat QR - version " +
-                                  str(data["qr_version"]))
-                    except Exception as e:
-                        print("[QR] Update QR error: " + str(e))
 
             except Exception as e:
                 print("[QR] Poll error: " + str(e))
@@ -255,6 +240,8 @@ class ZaloQR:
                 if "zalo" in c.get("domain", ""):
                     ck[c["name"]] = c["value"]
 
+            print("[QR] Cookies collected: " + str(list(ck.keys())))
+
             imei = ""
             for k in ["imei", "zpw_imei", "device_id", "deviceId"]:
                 try:
@@ -266,6 +253,10 @@ class ZaloQR:
                         break
                 except Exception:
                     pass
+
+            # Thử lấy từ cookie nếu có
+            if not imei and ck.get("zpw_imei"):
+                imei = ck["zpw_imei"]
 
             if not imei:
                 imei = gen_imei()
@@ -435,6 +426,70 @@ def api_qr_force_extract(session_id):
         return jsonify({"status": "waiting", "error": str(e)})
 
 
+@app.route("/api/qr/refresh/<session_id>", methods=["POST"])
+def api_qr_refresh(session_id):
+    """Chụp lại QR mới."""
+    info = ACTIVE_PAGES.get(session_id)
+    if not info:
+        return jsonify({"error": "Session đã đóng"}), 404
+
+    try:
+        async def _refresh():
+            page = info["page"]
+            await asyncio.sleep(1)
+
+            png = None
+            qr_element = await page.query_selector(
+                "canvas, img[alt*='QR'], img[src*='qr'], "
+                "[class*='qr-code'], [class*='qrcode'], [id*='qr']"
+            )
+            if qr_element:
+                png = await qr_element.screenshot()
+
+            if not png:
+                full_png = await page.screenshot(full_page=False)
+                from PIL import Image
+                img = Image.open(io.BytesIO(full_png))
+                w, h = img.size
+                img = img.crop((
+                    int(w * 0.15), int(h * 0.20),
+                    int(w * 0.85), int(h * 0.80)
+                ))
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                buf.seek(0)
+                png = buf.getvalue()
+            return png
+
+        result = {}
+
+        def run():
+            result["png"] = asyncio.run(_refresh())
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join(timeout=15)
+
+        if "png" not in result or not result["png"]:
+            return jsonify({"error": "Không chụp được QR"}), 500
+
+        png_path = os.path.join(DATA_DIR, session_id + ".png")
+        with open(png_path, "wb") as f:
+            f.write(result["png"])
+
+        data = sess_load(session_id) or {}
+        data["qr_version"] = int(time.time())
+        sess_save(session_id, data)
+
+        return jsonify({
+            "ok": True,
+            "qr_version": data["qr_version"],
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/qr-image/<session_id>")
 def qr_image(session_id):
     data = sess_load(session_id)
@@ -470,7 +525,7 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "service": "web-qr", "version": "24.0"})
+    return jsonify({"status": "ok", "service": "web-qr", "version": "25.0"})
 
 
 # ============================================================
@@ -699,7 +754,7 @@ HTML_HOME = """<!DOCTYPE html>
     </div>
 
     <h1>Tạo mã QR Zalo</h1>
-    <p class="sub">Quét QR → Đồng ý trên điện thoại → Lấy Cookie</p>
+    <p class="sub">Quét → Đồng ý trên điện thoại → Lấy Cookie</p>
 
     <button id="btn-start" class="btn-start" onclick="startQR()">
         🚀 TẠO MÃ QR
@@ -710,7 +765,7 @@ HTML_HOME = """<!DOCTYPE html>
         <div class="step-row"><div class="step-num">1</div><div>Bấm "Tạo mã QR"</div></div>
         <div class="step-row"><div class="step-num">2</div><div>Đợi 15-30s → hiện mã QR</div></div>
         <div class="step-row"><div class="step-num">3</div><div>Mở app Zalo → QR → Quét</div></div>
-        <div class="step-row"><div class="step-num">4</div><div>Trên điện thoại hiện thông báo → Đồng ý</div></div>
+        <div class="step-row"><div class="step-num">4</div><div>Điện thoại hiện thông báo → Đồng ý</div></div>
         <div class="step-row"><div class="step-num">5</div><div>Web tự hiện IMEI + Cookie</div></div>
     </div>
 
@@ -819,7 +874,7 @@ HTML_QR = """<!DOCTYPE html>
 
 .confirm-btn {
     width:100%;
-    margin-top:12px;
+    margin-top:10px;
     padding:14px;
     background:linear-gradient(135deg,#10b981,#059669);
     color:white; border:none; border-radius:14px;
@@ -830,6 +885,10 @@ HTML_QR = """<!DOCTYPE html>
 }
 .confirm-btn:hover { transform:translateY(-2px); }
 .confirm-btn:disabled { opacity:0.7; cursor:wait; }
+.confirm-btn.refresh {
+    background:linear-gradient(135deg,#f59e0b,#d97706);
+    box-shadow:0 10px 25px rgba(245,158,11,0.4);
+}
 
 .result-wrap {
     text-align:left;
@@ -962,16 +1021,15 @@ HTML_QR = """<!DOCTYPE html>
         <div class="logo-shine"></div>
     </div>
 
-    <h1>Quét QR Zalo</h1>
-    <p class="sub">Quét → Đồng ý trên điện thoại</p>
+    <h1>Quét QR Zalo PC</h1>
+    <p class="sub">Mở app Zalo → QR → Quét mã bên dưới</p>
 
     <div id="qr-area">
         <div class="qr-container">
             <img id="qr-img" src="/qr-image/{{ session_id }}" alt="QR">
         </div>
         <div class="qr-label">
-            📱 Mở app Zalo → QR → Quét mã<br>
-            <small style="opacity:0.7;">QR tự cập nhật nếu hết hạn</small>
+            📱 Quét → Đồng ý trên điện thoại
         </div>
     </div>
 
@@ -979,6 +1037,10 @@ HTML_QR = """<!DOCTYPE html>
         <span style="font-size:16px;">⏳</span>
         <span>Đang chờ quét...</span>
     </div>
+
+    <button id="btn-refresh" class="confirm-btn refresh" onclick="refreshQR()">
+        🔄 LÀM MỚI QR (nếu hết hạn)
+    </button>
 
     <button id="btn-check" class="confirm-btn" onclick="forceCheck()">
         ✅ TÔI ĐÃ BẤM ĐỒNG Ý - LẤY COOKIE
@@ -998,12 +1060,10 @@ async function check() {
         const d = await r.json();
         const el = document.getElementById('status');
 
-        // Update QR nếu có version mới
         if (d.qr_version && d.qr_version !== lastQrVersion) {
             lastQrVersion = d.qr_version;
             const img = document.getElementById('qr-img');
             img.src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
-            console.log('[QR] Cap nhat QR version: ' + d.qr_version);
         }
 
         if (d.status === 'waiting' || d.status === 'creating') {
@@ -1022,6 +1082,28 @@ async function check() {
             done = true;
         }
     } catch (e) {}
+}
+
+async function refreshQR() {
+    const btn = document.getElementById('btn-refresh');
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Đang lấy QR mới...';
+    try {
+        const r = await fetch('/api/qr/refresh/' + sessionId, { method: 'POST' });
+        const d = await r.json();
+        if (d.ok) {
+            const img = document.getElementById('qr-img');
+            img.src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
+            showToast('✅ Đã lấy QR mới!');
+            lastQrVersion = d.qr_version;
+        } else {
+            alert('Lỗi: ' + (d.error || 'Không rõ'));
+        }
+    } catch (e) {
+        alert('Lỗi: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.innerHTML = '🔄 LÀM MỚI QR (nếu hết hạn)';
 }
 
 async function forceCheck() {
@@ -1058,6 +1140,7 @@ function showResult(d) {
 
     document.getElementById('qr-area').style.display = 'none';
     document.getElementById('btn-check').style.display = 'none';
+    document.getElementById('btn-refresh').style.display = 'none';
 
     const el = document.getElementById('status');
     el.className = 'status';
