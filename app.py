@@ -1,6 +1,6 @@
 # ============================================================
-# WEB-QR v19.0 — Tạo QR Zalo (Bot by Anh Khôi)
-# Giao diện hiện đại — Hiệu ứng premium — Chạy 100%
+# WEB-QR v20.0 — Tạo QR Zalo (Bot by Anh Khôi)
+# Logo ☎️ animation 3D — Giao diện premium
 # ============================================================
 import os
 import io
@@ -81,21 +81,22 @@ class ZaloQR:
             page = await ctx.new_page()
             await page.goto(
                 "https://chat.zalo.me/",
-                wait_until="domcontentloaded",
-                timeout=30000,
+                wait_until="networkidle",
+                timeout=60000,
             )
-            await asyncio.sleep(3)
+
+            await asyncio.sleep(8)
 
             try:
                 btn = await page.wait_for_selector(
-                    "text=/QR|Quét mã/i", timeout=5000
+                    "text=/QR|Quét mã/i", timeout=20000
                 )
                 await btn.click()
-                await asyncio.sleep(2)
-            except Exception:
-                pass
+                print("[QR] Da click tab QR")
+            except Exception as e:
+                print("[QR] Khong thay tab QR: " + str(e))
 
-            await asyncio.sleep(3)
+            await asyncio.sleep(8)
 
             png = await page.screenshot(full_page=False)
             try:
@@ -222,7 +223,7 @@ def api_qr_create():
     threading.Thread(target=run, daemon=True).start()
 
     start = time.time()
-    while time.time() - start < 40:
+    while time.time() - start < 60:
         data = sess_load(session_id)
         if data and data["status"] in ("waiting", "error"):
             break
@@ -275,29 +276,23 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "service": "web-qr", "version": "19.0"})
+    return jsonify({"status": "ok", "service": "web-qr", "version": "20.0"})
 
 
 # ============================================================
-# HTML — TRANG CHỦ (SIÊU ĐẸP)
+# CSS CHUNG — LOGO ☎️ ANIMATION
 # ============================================================
-HTML_HOME = """<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Tạo QR Zalo — ALB Forge</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<style>
+SHARED_CSS = """
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html { -webkit-text-size-adjust:100%; touch-action:manipulation; }
 body {
-    font-family:'Inter',sans-serif;
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
     min-height:100vh; min-height:100dvh;
     display:flex; align-items:center; justify-content:center;
-    background:linear-gradient(-45deg,#667eea,#764ba2,#f093fb,#f5576c);
-    background-size:400% 400%;
-    animation:gradientShift 15s ease infinite;
-    padding:20px; overflow:hidden;
+    background:linear-gradient(-45deg,#667eea,#764ba2,#f093fb,#f5576c,#667eea);
+    background-size:500% 500%;
+    animation:gradientShift 18s ease infinite;
+    padding:20px; overflow-x:hidden;
     position:relative;
 }
 @keyframes gradientShift {
@@ -309,27 +304,171 @@ body {
 /* Floating orbs */
 .orb {
     position:fixed; border-radius:50%;
-    background:radial-gradient(circle,rgba(255,255,255,0.15),transparent 70%);
+    background:radial-gradient(circle,rgba(255,255,255,0.18),transparent 70%);
     pointer-events:none; z-index:0;
+    will-change:transform;
 }
 .orb1 { width:400px; height:400px; top:-100px; left:-100px; animation:float1 20s ease-in-out infinite; }
 .orb2 { width:300px; height:300px; bottom:-80px; right:-80px; animation:float2 15s ease-in-out infinite; }
-.orb3 { width:200px; height:200px; top:50%; left:80%; animation:float3 18s ease-in-out infinite; }
-@keyframes float1 { 0%,100% { transform:translate(0,0); } 50% { transform:translate(60px,40px); } }
-@keyframes float2 { 0%,100% { transform:translate(0,0); } 50% { transform:translate(-50px,-60px); } }
-@keyframes float3 { 0%,100% { transform:translate(0,0); } 50% { transform:translate(-30px,80px); } }
+.orb3 { width:220px; height:220px; top:55%; left:75%; animation:float3 18s ease-in-out infinite; }
+@keyframes float1 { 0%,100% { transform:translate(0,0) scale(1); } 50% { transform:translate(70px,50px) scale(1.1); } }
+@keyframes float2 { 0%,100% { transform:translate(0,0) scale(1); } 50% { transform:translate(-60px,-70px) scale(1.15); } }
+@keyframes float3 { 0%,100% { transform:translate(0,0) scale(1); } 50% { transform:translate(-40px,90px) scale(0.9); } }
 
+/* ============================================================
+   LOGO ☎️ — ANIMATION 3D SIÊU ĐẸP
+   ============================================================ */
+.logo-wrap {
+    position:relative;
+    width:130px; height:130px;
+    margin:0 auto 32px;
+    perspective:1000px;
+}
+
+/* Halo phát sáng phía sau */
+.logo-halo {
+    position:absolute; inset:-30px;
+    border-radius:50%;
+    background:radial-gradient(circle,
+        rgba(245,87,108,0.7) 0%,
+        rgba(240,147,251,0.5) 30%,
+        rgba(102,126,234,0.3) 60%,
+        transparent 80%);
+    filter:blur(20px);
+    animation:haloPulse 3s ease-in-out infinite;
+    z-index:0;
+}
+@keyframes haloPulse {
+    0%,100% { transform:scale(1); opacity:0.7; }
+    50% { transform:scale(1.25); opacity:1; }
+}
+
+/* Vòng xoay bên ngoài */
+.logo-ring {
+    position:absolute; inset:-15px;
+    border:2px solid transparent;
+    border-top-color:rgba(255,255,255,0.8);
+    border-right-color:rgba(255,255,255,0.3);
+    border-radius:50%;
+    animation:ringRotate 4s linear infinite;
+    z-index:1;
+}
+.logo-ring::before {
+    content:'';
+    position:absolute; inset:8px;
+    border:2px solid transparent;
+    border-bottom-color:rgba(255,255,255,0.6);
+    border-left-color:rgba(255,255,255,0.2);
+    border-radius:50%;
+    animation:ringRotate 3s linear infinite reverse;
+}
+@keyframes ringRotate {
+    to { transform:rotate(360deg); }
+}
+
+/* Thân logo ☎️ */
+.logo-icon {
+    position:absolute; inset:0;
+    border-radius:36px;
+    background:linear-gradient(135deg,#f093fb 0%,#f5576c 50%,#ee5a6f 100%);
+    display:flex; align-items:center; justify-content:center;
+    font-size:72px;
+    box-shadow:
+        0 30px 70px rgba(245,87,108,0.6),
+        0 15px 35px rgba(240,147,251,0.4),
+        inset 0 -6px 25px rgba(0,0,0,0.2),
+        inset 0 6px 25px rgba(255,255,255,0.5);
+    animation:iconFloat 3.5s ease-in-out infinite;
+    z-index:2;
+    will-change:transform;
+    transform-style:preserve-3d;
+}
+@keyframes iconFloat {
+    0%,100% {
+        transform:translateY(0) rotateY(0deg) rotateZ(0deg) scale(1);
+    }
+    25% {
+        transform:translateY(-10px) rotateY(15deg) rotateZ(-5deg) scale(1.03);
+    }
+    50% {
+        transform:translateY(-16px) rotateY(0deg) rotateZ(0deg) scale(1.05);
+    }
+    75% {
+        transform:translateY(-10px) rotateY(-15deg) rotateZ(5deg) scale(1.03);
+    }
+}
+
+/* Ánh sáng lấp lánh trên logo */
+.logo-shine {
+    position:absolute; inset:0;
+    border-radius:36px;
+    background:linear-gradient(120deg,
+        transparent 30%,
+        rgba(255,255,255,0.6) 50%,
+        transparent 70%);
+    transform:translateX(-100%);
+    animation:shineMove 3s ease-in-out infinite;
+    z-index:3;
+    pointer-events:none;
+}
+@keyframes shineMove {
+    0% { transform:translateX(-100%) skewX(-20deg); }
+    60%,100% { transform:translateX(200%) skewX(-20deg); }
+}
+
+/* Tia sáng tỏa ra */
+.logo-spark {
+    position:absolute;
+    width:4px; height:4px;
+    background:white;
+    border-radius:50%;
+    box-shadow:0 0 12px rgba(255,255,255,0.9);
+    z-index:4;
+    animation:sparkOrbit 4s linear infinite;
+}
+.logo-spark:nth-child(2) {
+    animation-delay:-1s;
+}
+.logo-spark:nth-child(3) {
+    animation-delay:-2s;
+}
+.logo-spark:nth-child(4) {
+    animation-delay:-3s;
+}
+@keyframes sparkOrbit {
+    0% {
+        transform:translate(65px,0) scale(1);
+        opacity:1;
+    }
+    25% {
+        transform:translate(0,65px) scale(0.8);
+        opacity:0.8;
+    }
+    50% {
+        transform:translate(-65px,0) scale(1);
+        opacity:1;
+    }
+    75% {
+        transform:translate(0,-65px) scale(0.8);
+        opacity:0.8;
+    100% {
+        transform:translate(65px,0) scale(1);
+        opacity:1;
+    }
+}
+
+/* Card chung */
 .card {
     background:rgba(255,255,255,0.98);
     backdrop-filter:blur(30px) saturate(180%);
     -webkit-backdrop-filter:blur(30px) saturate(180%);
-    padding:56px 44px; border-radius:36px;
+    padding:50px 40px; border-radius:38px;
     box-shadow:
         0 40px 100px rgba(0,0,0,0.35),
         0 0 0 1px rgba(255,255,255,0.6),
         inset 0 1px 0 rgba(255,255,255,0.9);
-    text-align:center; max-width:540px; width:100%;
-    position:relative; z-index:1;
+    text-align:center; max-width:560px; width:100%;
+    position:relative; z-index:5;
     animation:cardIn 0.9s cubic-bezier(0.16,1,0.3,1);
 }
 @keyframes cardIn {
@@ -337,40 +476,40 @@ body {
     to { opacity:1; transform:translateY(0) scale(1); }
 }
 
-.logo {
-    width:104px; height:104px; border-radius:32px;
-    background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);
-    display:flex; align-items:center; justify-content:center;
-    font-size:56px; margin:0 auto 28px;
-    box-shadow:
-        0 25px 60px rgba(245,87,108,0.55),
-        inset 0 -4px 20px rgba(0,0,0,0.15),
-        inset 0 4px 20px rgba(255,255,255,0.4);
-    animation:logoFloat 3.5s ease-in-out infinite;
-    position:relative;
-}
-.logo::after {
-    content:'';
-    position:absolute; inset:0;
-    border-radius:32px;
-    background:linear-gradient(135deg,rgba(255,255,255,0.4),transparent 50%);
-    pointer-events:none;
-}
-@keyframes logoFloat {
-    0%,100% { transform:translateY(0) rotate(0deg); }
-    50% { transform:translateY(-12px) rotate(-3deg); }
-}
-
 h1 {
-    color:#1a1a2e; margin-bottom:14px;
-    font-size:32px; font-weight:900;
-    letter-spacing:-1px;
+    color:#1a1a2e; margin-bottom:12px;
+    font-size:30px; font-weight:900;
+    letter-spacing:-0.8px;
     background:linear-gradient(135deg,#667eea,#764ba2,#f5576c);
     -webkit-background-clip:text;
     -webkit-text-fill-color:transparent;
     background-clip:text;
 }
-p.sub { color:#6b7280; margin-bottom:36px; font-size:16px; font-weight:500; }
+p.sub { color:#6b7280; margin-bottom:32px; font-size:15px; font-weight:500; }
+
+@media (max-width:640px) {
+    .logo-wrap { width:110px; height:110px; }
+    .logo-icon { font-size:60px; border-radius:30px; }
+    .logo-shine { border-radius:30px; }
+    .logo-spark { width:3px; height:3px; }
+    h1 { font-size:24px; }
+    .card { padding:36px 24px; border-radius:30px; }
+}
+"""
+
+
+# ============================================================
+# HTML — TRANG CHỦ
+# ============================================================
+HTML_HOME = """<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Tạo QR Zalo — ALB Forge</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+""" + SHARED_CSS + """
 
 .btn-start {
     width:100%; padding:22px; border:none; border-radius:22px;
@@ -429,12 +568,26 @@ p.sub { color:#6b7280; margin-bottom:36px; font-size:16px; font-weight:500; }
 <div class="orb orb3"></div>
 
 <div class="card">
-    <div class="logo">📱</div>
+
+    <!-- LOGO ☎️ ANIMATION -->
+    <div class="logo-wrap">
+        <div class="logo-halo"></div>
+        <div class="logo-ring"></div>
+        <div class="logo-icon">☎️</div>
+        <div class="logo-shine"></div>
+        <div class="logo-spark" style="top:50%; left:50%; margin:-2px 0 0 -2px;"></div>
+        <div class="logo-spark" style="top:50%; left:50%; margin:-2px 0 0 -2px;"></div>
+        <div class="logo-spark" style="top:50%; left:50%; margin:-2px 0 0 -2px;"></div>
+        <div class="logo-spark" style="top:50%; left:50%; margin:-2px 0 0 -2px;"></div>
+    </div>
+
     <h1>Tạo mã QR Zalo</h1>
     <p class="sub">Quét QR để lấy IMEI + Cookie</p>
+
     <button id="btn-start" class="btn-start" onclick="startQR()">
         🚀 TẠO MÃ QR
     </button>
+
     <div class="steps">
         <div class="steps-title">Hướng dẫn nhanh</div>
         <div class="step-row"><div class="step-num">1</div><div>Bấm nút "Tạo mã QR" ở trên</div></div>
@@ -442,6 +595,7 @@ p.sub { color:#6b7280; margin-bottom:36px; font-size:16px; font-weight:500; }
         <div class="step-row"><div class="step-num">3</div><div>Mở app Zalo → QR → Quét mã</div></div>
         <div class="step-row"><div class="step-num">4</div><div>Copy IMEI + Cookie sang web spam</div></div>
     </div>
+
 </div>
 
 <script>
@@ -454,7 +608,7 @@ async function startQR() {
         const d = await r.json();
         if (d.ok) {
             btn.innerHTML = '✅ XONG! ĐANG CHUYỂN TRANG...';
-            setTimeout(() => { window.location.href = d.qr_url; }, 300);
+            setTimeout(function() { window.location.href = d.qr_url; }, 300);
         } else {
             alert('Lỗi: ' + (d.error || 'Không rõ'));
             btn.disabled = false;
@@ -473,7 +627,7 @@ async function startQR() {
 
 
 # ============================================================
-# HTML — TRANG QR (SIÊU ĐẸP)
+# HTML — TRANG QR
 # ============================================================
 HTML_QR = """<!DOCTYPE html>
 <html lang="vi">
@@ -483,55 +637,7 @@ HTML_QR = """<!DOCTYPE html>
 <title>Quét QR — ALB Forge</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
-* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-body {
-    font-family:'Inter',sans-serif;
-    min-height:100vh; min-height:100dvh;
-    display:flex; align-items:center; justify-content:center;
-    background:linear-gradient(-45deg,#667eea,#764ba2,#f093fb,#f5576c);
-    background-size:400% 400%;
-    animation:gradientShift 15s ease infinite;
-    padding:20px; overflow-x:hidden;
-}
-@keyframes gradientShift {
-    0% { background-position:0% 50%; }
-    50% { background-position:100% 50%; }
-    100% { background-position:0% 50%; }
-}
-
-.orb {
-    position:fixed; border-radius:50%;
-    background:radial-gradient(circle,rgba(255,255,255,0.15),transparent 70%);
-    pointer-events:none; z-index:0;
-}
-.orb1 { width:400px; height:400px; top:-100px; left:-100px; animation:float1 20s ease-in-out infinite; }
-.orb2 { width:300px; height:300px; bottom:-80px; right:-80px; animation:float2 15s ease-in-out infinite; }
-@keyframes float1 { 0%,100% { transform:translate(0,0); } 50% { transform:translate(60px,40px); } }
-@keyframes float2 { 0%,100% { transform:translate(0,0); } 50% { transform:translate(-50px,-60px); } }
-
-.card {
-    background:rgba(255,255,255,0.98);
-    backdrop-filter:blur(30px) saturate(180%);
-    -webkit-backdrop-filter:blur(30px) saturate(180%);
-    padding:40px 32px; border-radius:36px;
-    box-shadow:
-        0 40px 100px rgba(0,0,0,0.35),
-        0 0 0 1px rgba(255,255,255,0.6);
-    text-align:center; max-width:580px; width:100%;
-    position:relative; z-index:1;
-    animation:cardIn 0.8s cubic-bezier(0.16,1,0.3,1);
-}
-@keyframes cardIn {
-    from { opacity:0; transform:translateY(50px) scale(0.94); }
-    to { opacity:1; transform:translateY(0) scale(1); }
-}
-
-h1 {
-    color:#1a1a2e; margin-bottom:10px;
-    font-size:26px; font-weight:900;
-    letter-spacing:-0.6px;
-}
-p.sub { color:#6b7280; margin-bottom:26px; font-size:14px; font-weight:600; }
+""" + SHARED_CSS + """
 
 .qr-box {
     background:linear-gradient(135deg,#f9fafb,#f3f4f6);
@@ -550,11 +656,11 @@ p.sub { color:#6b7280; margin-bottom:26px; font-size:14px; font-weight:600; }
     z-index:-1;
     opacity:0.4;
     filter:blur(15px);
-    animation:pulseGlow 3s ease-in-out infinite;
+    animation:qrGlow 3s ease-in-out infinite;
 }
-@keyframes pulseGlow {
+@keyframes qrGlow {
     0%,100% { opacity:0.4; }
-    50% { opacity:0.7; }
+    50% { opacity:0.75; }
 }
 .qr-box img {
     max-width:100%; border-radius:16px;
@@ -581,7 +687,6 @@ p.sub { color:#6b7280; margin-bottom:26px; font-size:14px; font-weight:600; }
 .status.error { background:linear-gradient(135deg,#fee2e2,#fecaca); color:#991b1b; }
 .status.expired { background:linear-gradient(135deg,#f3f4f6,#e5e7eb); color:#374151; }
 
-/* RESULT */
 .result-wrap {
     text-align:left;
     animation:resultIn 0.6s cubic-bezier(0.16,1,0.3,1);
@@ -628,7 +733,6 @@ p.sub { color:#6b7280; margin-bottom:26px; font-size:14px; font-weight:600; }
     background:linear-gradient(135deg,#ecfdf5,#d1fae5);
     margin-bottom:14px;
     border:1px solid #a7f3d0;
-    position:relative;
 }
 .result .label {
     font-size:11px; color:#065f46;
@@ -683,12 +787,10 @@ p.sub { color:#6b7280; margin-bottom:26px; font-size:14px; font-weight:600; }
     box-shadow:0 12px 30px rgba(16,185,129,0.4);
 }
 .copy-btn.green:hover { box-shadow:0 18px 40px rgba(16,185,129,0.55); }
-
 .copy-btn.purple {
     background:linear-gradient(135deg,#8b5cf6,#7c3aed);
     box-shadow:0 12px 30px rgba(139,92,246,0.4);
 }
-
 .copy-btn.blue {
     background:linear-gradient(135deg,#3b82f6,#2563eb);
     box-shadow:0 12px 30px rgba(59,130,246,0.4);
@@ -700,7 +802,6 @@ p.sub { color:#6b7280; margin-bottom:26px; font-size:14px; font-weight:600; }
     font-weight:600; line-height:1.6;
 }
 
-/* Toast */
 .toast {
     position:fixed; bottom:30px; left:50%;
     transform:translateX(-50%);
@@ -717,16 +818,12 @@ p.sub { color:#6b7280; margin-bottom:26px; font-size:14px; font-weight:600; }
     from { opacity:0; transform:translateX(-50%) translateY(40px) scale(0.8); }
     to { opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
 }
-.toast.out {
-    animation:toastOut 0.3s ease forwards;
-}
+.toast.out { animation:toastOut 0.3s ease forwards; }
 @keyframes toastOut {
     to { opacity:0; transform:translateX(-50%) translateY(30px) scale(0.9); }
 }
 
 @media (max-width:640px) {
-    .card { padding:30px 22px; border-radius:28px; }
-    h1 { font-size:22px; }
     .qr-box { padding:20px; }
     .success-icon { font-size:48px; }
     .success-title { font-size:18px; }
@@ -737,17 +834,34 @@ p.sub { color:#6b7280; margin-bottom:26px; font-size:14px; font-weight:600; }
 <body>
 <div class="orb orb1"></div>
 <div class="orb orb2"></div>
+<div class="orb orb3"></div>
 
 <div class="card">
+
+    <!-- LOGO ☎️ -->
+    <div class="logo-wrap">
+        <div class="logo-halo"></div>
+        <div class="logo-ring"></div>
+        <div class="logo-icon">☎️</div>
+        <div class="logo-shine"></div>
+        <div class="logo-spark" style="top:50%; left:50%; margin:-2px 0 0 -2px;"></div>
+        <div class="logo-spark" style="top:50%; left:50%; margin:-2px 0 0 -2px;"></div>
+        <div class="logo-spark" style="top:50%; left:50%; margin:-2px 0 0 -2px;"></div>
+        <div class="logo-spark" style="top:50%; left:50%; margin:-2px 0 0 -2px;"></div>
+    </div>
+
     <h1>📱 Quét QR Zalo</h1>
     <p class="sub">Mở app Zalo → QR → Quét mã bên dưới</p>
+
     <div class="qr-box" id="qr-box">
         <img src="/qr-image/{{ session_id }}" alt="QR">
     </div>
+
     <div id="status" class="status waiting">
         <span style="font-size:20px;">⏳</span>
         <span>Đang chờ quét...</span>
     </div>
+
 </div>
 
 <script>
@@ -824,9 +938,7 @@ function copyText(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(function() {
             showToast('✅ Đã copy!');
-        }).catch(function() {
-            fallbackCopy(text);
-        });
+        }).catch(function() { fallbackCopy(text); });
     } else {
         fallbackCopy(text);
     }
@@ -880,39 +992,15 @@ HTML_EXPIRED = """<!DOCTYPE html>
 <title>Hết hạn — ALB Forge</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body {
-    font-family:'Inter',sans-serif;
-    min-height:100vh; min-height:100dvh;
-    display:flex; align-items:center; justify-content:center;
-    background:linear-gradient(-45deg,#667eea,#764ba2,#f093fb,#f5576c);
-    background-size:400% 400%;
-    animation:gradientShift 15s ease infinite;
-    padding:20px;
-}
-@keyframes gradientShift {
-    0% { background-position:0% 50%; }
-    50% { background-position:100% 50%; }
-    100% { background-position:0% 50%; }
-}
-.card {
-    background:rgba(255,255,255,0.98);
-    padding:56px 44px; border-radius:36px;
-    box-shadow:0 40px 100px rgba(0,0,0,0.35);
-    text-align:center; max-width:520px;
-    animation:cardIn 0.8s cubic-bezier(0.16,1,0.3,1);
-}
-@keyframes cardIn {
-    from { opacity:0; transform:translateY(50px) scale(0.94); }
-    to { opacity:1; transform:translateY(0) scale(1); }
-}
-.icon { font-size:80px; margin-bottom:24px; animation:iconWobble 2s ease-in-out infinite; }
+""" + SHARED_CSS + """
+
+.expired-icon { font-size:80px; margin-bottom:24px; animation:iconWobble 2s ease-in-out infinite; }
 @keyframes iconWobble {
     0%,100% { transform:rotate(0deg); }
     25% { transform:rotate(-8deg); }
     75% { transform:rotate(8deg); }
 }
-h1 { color:#1a1a2e; margin-bottom:16px; font-size:28px; font-weight:900; letter-spacing:-0.5px; }
+h1 { color:#1a1a2e; margin-bottom:16px; font-size:28px; font-weight:900; }
 p { color:#6b7280; font-size:15px; margin-bottom:28px; line-height:1.7; }
 a {
     display:inline-block; padding:18px 40px;
@@ -926,8 +1014,11 @@ a:hover { transform:translateY(-3px); box-shadow:0 22px 55px rgba(102,126,234,0.
 </style>
 </head>
 <body>
+<div class="orb orb1"></div>
+<div class="orb orb2"></div>
+
 <div class="card">
-    <div class="icon">⏰</div>
+    <div class="expired-icon">⏰</div>
     <h1>Session hết hạn</h1>
     <p>Session QR này đã hết hạn.<br>Vui lòng tạo mã QR mới.</p>
     <a href="/">🔄 Tạo QR mới</a>
