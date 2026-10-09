@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: alb-qr
+    env: python
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m playwright install chromium
+    startCommand: |
+      python -m playwright install chromium 2>/dev/null || true
+      gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 180
+    healthCheckPath: /health
+    envVars:
+      - key: LENH_KEY
+        value: "qr-lenh-shared-key-2026"
+      - key: PYTHON_VERSION
+        value: 3.11.9
