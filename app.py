@@ -1,6 +1,6 @@
 # ============================================================
-# WEB-QR v22.0 — Tạo QR Zalo (Bot by Anh Khôi)
-# ỔN ĐỊNH — Auto detect cookie — Không bị treo
+# WEB-QR v23.0 — Tạo QR Zalo (Bot by Anh Khôi)
+# Auto detect cookie — Ổn định — Đầy đủ
 # ============================================================
 import os
 import io
@@ -91,7 +91,7 @@ class ZaloQR:
                 timeout=60000,
             )
 
-            # Đợi trang load xong
+            # Đợi trang load
             await asyncio.sleep(8)
 
             # Click tab QR
@@ -106,7 +106,7 @@ class ZaloQR:
 
             await asyncio.sleep(6)
 
-            # Chụp QR — ưu tiên element riêng
+            # Chụp QR
             png = None
             try:
                 qr_element = await page.query_selector(
@@ -114,22 +114,20 @@ class ZaloQR:
                 )
                 if qr_element:
                     png = await qr_element.screenshot()
-                    print("[QR] Da chup rieng element QR")
+                    print("[QR] Da chup element QR")
             except Exception as e:
-                print("[QR] Khong chup duoc element: " + str(e))
+                print("[QR] Khong chup element: " + str(e))
 
-            # Fallback: chụp full rồi cắt giữa
             if not png:
                 full_png = await page.screenshot(full_page=False)
                 try:
                     from PIL import Image
                     img = Image.open(io.BytesIO(full_png))
                     w, h = img.size
-                    left = int(w * 0.18)
-                    top = int(h * 0.22)
-                    right = int(w * 0.82)
-                    bottom = int(h * 0.78)
-                    img = img.crop((left, top, right, bottom))
+                    img = img.crop((
+                        int(w * 0.18), int(h * 0.22),
+                        int(w * 0.82), int(h * 0.78)
+                    ))
                     buf = io.BytesIO()
                     img.save(buf, format="PNG")
                     buf.seek(0)
@@ -151,22 +149,22 @@ class ZaloQR:
                 "imei": None,
             })
 
-            print("[QR] Session " + session_id + " ready")
+            print("[QR] Session " + session_id + " ready - Doi user quet")
 
-            # Lưu page vào biến toàn cục để endpoint force-extract dùng
             ACTIVE_PAGES[session_id] = {
                 "page": page,
                 "browser": self.browser,
                 "playwright": self.playwright,
             }
 
+            # Chạy poll trong thread riêng
             threading.Thread(
                 target=lambda: asyncio.run(self._poll(page, session_id)),
                 daemon=True,
             ).start()
 
         except Exception as e:
-            print("[QR] error: " + str(e))
+            print("[QR] create_qr error: " + str(e))
             sess_save(session_id, {
                 "status": "error",
                 "error": str(e),
@@ -175,45 +173,51 @@ class ZaloQR:
 
     async def _poll(self, page, session_id):
         """
-        Poll cookie zpw_sek — KHÔNG đợi URL.
-        Sau khi user bấm Đồng ý, cookie sẽ xuất hiện.
+        Poll LIÊN TỤC mỗi 1.5s để phát hiện cookie.
+        Sau khi user bấm "Đồng ý" trên điện thoại → cookie sẽ xuất hiện.
         """
         start = time.time()
-        cookie_hits = 0
         reloaded = False
+        check_count = 0
 
         while time.time() - start < QR_TTL:
+            check_count += 1
             try:
-                # ===== CHECK COOKIE =====
+                # ===== ĐỌC COOKIE =====
                 cookies = await page.context.cookies()
                 ck_dict = {}
                 for c in cookies:
                     if "zalo" in c.get("domain", ""):
                         ck_dict[c["name"]] = c["value"]
 
-                if ck_dict.get("zpw_sek"):
-                    cookie_hits += 1
-                    print("[QR] zpw_sek hit " + str(cookie_hits))
-                    if cookie_hits >= 2:
-                        print("[QR] COOKIE OK")
-                        return await self._extract(session_id, page)
-                else:
-                    cookie_hits = 0
+                # Log mỗi 5 lần để theo dõi
+                if check_count % 5 == 0:
+                    print("[QR] Poll #" + str(check_count) +
+                          " | cookies: " + str(len(ck_dict)) +
+                          " | has_zpw_sek: " + str("zpw_sek" in ck_dict))
 
-                # ===== CHECK URL =====
-                url = page.url
-                if "chat.zalo.me" in url and "/login" not in url and "qr" not in url.lower():
-                    print("[QR] URL chat: " + url)
-                    # Đợi thêm 3s cho cookie ổn định
+                # ===== PHÁT HIỆN COOKIE ZPW_SEK =====
+                if ck_dict.get("zpw_sek"):
+                    print("[QR] Phat hien zpw_sek - Doi 3s")
                     await asyncio.sleep(3)
                     return await self._extract(session_id, page)
 
-                # ===== AUTO RELOAD sau 25s nếu chưa có =====
-                elapsed = time.time() - start
-                if elapsed > 25 and not reloaded:
-                    print("[QR] Reload trang sau 25s")
+                # ===== CHECK URL =====
+                url = page.url
+                if ("chat.zalo.me" in url and "/login" not in url
+                        and "qr" not in url.lower()):
+                    print("[QR] URL doi: " + url)
+                    await asyncio.sleep(3)
+                    return await self._extract(session_id, page)
+
+                # ===== AUTO RELOAD sau 30s =====
+                if time.time() - start > 30 and not reloaded:
+                    print("[QR] Reload sau 30s")
                     try:
-                        await page.reload(wait_until="domcontentloaded", timeout=30000)
+                        await page.reload(
+                            wait_until="domcontentloaded",
+                            timeout=30000
+                        )
                         reloaded = True
                     except Exception as e:
                         print("[QR] Reload error: " + str(e))
@@ -221,8 +225,10 @@ class ZaloQR:
             except Exception as e:
                 print("[QR] Poll error: " + str(e))
 
-            await asyncio.sleep(2)
+            await asyncio.sleep(1.5)
 
+        # Hết hạn
+        print("[QR] Session het han: " + session_id)
         data = sess_load(session_id) or {}
         data["status"] = "expired"
         sess_save(session_id, data)
@@ -230,7 +236,7 @@ class ZaloQR:
 
     async def _extract(self, session_id, page):
         try:
-            print("[QR] Doi 5s...")
+            print("[QR] Extract - Doi 5s")
             await asyncio.sleep(5)
 
             cookies = await page.context.cookies()
@@ -243,7 +249,9 @@ class ZaloQR:
             imei = ""
             for k in ["imei", "zpw_imei", "device_id", "deviceId"]:
                 try:
-                    v = await page.evaluate("localStorage.getItem('" + k + "')")
+                    v = await page.evaluate(
+                        "localStorage.getItem('" + k + "')"
+                    )
                     if v:
                         imei = v
                         break
@@ -261,7 +269,7 @@ class ZaloQR:
             sess_save(session_id, data)
 
             print("[QR] DONE - IMEI: " + imei)
-            print("[QR] Cookies: " + str(len(ck)))
+            print("[QR] Cookies: " + str(len(ck)) + " items")
 
             await self._cleanup(session_id)
         except Exception as e:
@@ -337,15 +345,11 @@ def api_qr_status(session_id):
 
 @app.route("/api/qr/force-extract/<session_id>", methods=["POST"])
 def api_qr_force_extract(session_id):
-    """
-    Force lấy cookie khi user bấm nút "Tôi đã đồng ý".
-    Đọc cookie trực tiếp từ page đang chạy.
-    """
+    """Force lấy cookie khi user bấm nút."""
     data = sess_load(session_id)
     if not data:
         return jsonify({"error": "Session không tồn tại"}), 404
 
-    # Đã có cookie
     if data.get("status") == "done" and data.get("cookies"):
         return jsonify({
             "status": "done",
@@ -353,7 +357,6 @@ def api_qr_force_extract(session_id):
             "cookies": data.get("cookies"),
         })
 
-    # Đọc trực tiếp từ page
     info = ACTIVE_PAGES.get(session_id)
     if not info:
         return jsonify({
@@ -375,7 +378,9 @@ def api_qr_force_extract(session_id):
             imei = ""
             for k in ["imei", "zpw_imei", "device_id", "deviceId"]:
                 try:
-                    v = await page.evaluate("localStorage.getItem('" + k + "')")
+                    v = await page.evaluate(
+                        "localStorage.getItem('" + k + "')"
+                    )
                     if v:
                         imei = v
                         break
@@ -383,8 +388,8 @@ def api_qr_force_extract(session_id):
                     pass
             return ck, imei
 
-        # Chạy async trong thread
         result = {}
+
         def run():
             result["data"] = asyncio.run(_read())
 
@@ -393,7 +398,7 @@ def api_qr_force_extract(session_id):
         t.join(timeout=10)
 
         if "data" not in result:
-            return jsonify({"status": "waiting", "note": "Timeout đọc cookie"})
+            return jsonify({"status": "waiting", "note": "Timeout"})
 
         ck, imei = result["data"]
 
@@ -412,7 +417,7 @@ def api_qr_force_extract(session_id):
 
         return jsonify({
             "status": "waiting",
-            "note": "Chưa có cookie zpw_sek",
+            "note": "Chưa có zpw_sek",
             "cookies_count": len(ck),
         })
 
@@ -446,7 +451,7 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "service": "web-qr", "version": "22.0"})
+    return jsonify({"status": "ok", "service": "web-qr", "version": "23.0"})
 
 
 # ============================================================
@@ -485,18 +490,18 @@ body {
 
 .logo-wrap {
     position:relative;
-    width:110px; height:110px;
-    margin:0 auto 28px;
+    width:100px; height:100px;
+    margin:0 auto 24px;
 }
 .logo-halo {
-    position:absolute; inset:-25px;
+    position:absolute; inset:-22px;
     border-radius:50%;
     background:radial-gradient(circle,
         rgba(245,87,108,0.7) 0%,
         rgba(240,147,251,0.5) 30%,
         rgba(102,126,234,0.3) 60%,
         transparent 80%);
-    filter:blur(18px);
+    filter:blur(16px);
     animation:haloPulse 3s ease-in-out infinite;
     z-index:0;
 }
@@ -505,7 +510,7 @@ body {
     50% { transform:scale(1.25); opacity:1; }
 }
 .logo-ring {
-    position:absolute; inset:-12px;
+    position:absolute; inset:-10px;
     border:2px solid transparent;
     border-top-color:rgba(255,255,255,0.8);
     border-right-color:rgba(255,255,255,0.3);
@@ -526,10 +531,10 @@ body {
 
 .logo-icon {
     position:absolute; inset:0;
-    border-radius:32px;
+    border-radius:28px;
     background:linear-gradient(135deg,#f093fb 0%,#f5576c 50%,#ee5a6f 100%);
     display:flex; align-items:center; justify-content:center;
-    font-size:60px;
+    font-size:52px;
     box-shadow:
         0 25px 60px rgba(245,87,108,0.6),
         0 12px 30px rgba(240,147,251,0.4),
@@ -547,7 +552,7 @@ body {
 
 .logo-shine {
     position:absolute; inset:0;
-    border-radius:32px;
+    border-radius:28px;
     background:linear-gradient(120deg,
         transparent 30%,
         rgba(255,255,255,0.6) 50%,
@@ -566,12 +571,12 @@ body {
     background:rgba(255,255,255,0.98);
     backdrop-filter:blur(30px) saturate(180%);
     -webkit-backdrop-filter:blur(30px) saturate(180%);
-    padding:40px 28px; border-radius:36px;
+    padding:36px 24px; border-radius:32px;
     box-shadow:
         0 40px 100px rgba(0,0,0,0.35),
         0 0 0 1px rgba(255,255,255,0.6),
         inset 0 1px 0 rgba(255,255,255,0.9);
-    text-align:center; max-width:500px; width:100%;
+    text-align:center; max-width:480px; width:100%;
     position:relative; z-index:5;
     animation:cardIn 0.9s cubic-bezier(0.16,1,0.3,1);
 }
@@ -581,22 +586,22 @@ body {
 }
 
 h1 {
-    color:#1a1a2e; margin-bottom:10px;
-    font-size:26px; font-weight:900;
+    color:#1a1a2e; margin-bottom:8px;
+    font-size:24px; font-weight:900;
     letter-spacing:-0.6px;
     background:linear-gradient(135deg,#667eea,#764ba2,#f5576c);
     -webkit-background-clip:text;
     -webkit-text-fill-color:transparent;
     background-clip:text;
 }
-p.sub { color:#6b7280; margin-bottom:24px; font-size:14px; font-weight:500; }
+p.sub { color:#6b7280; margin-bottom:22px; font-size:13px; font-weight:500; }
 
 @media (max-width:640px) {
-    .logo-wrap { width:96px; height:96px; margin-bottom:22px; }
-    .logo-icon { font-size:52px; border-radius:28px; }
-    .logo-shine { border-radius:28px; }
-    h1 { font-size:22px; }
-    .card { padding:32px 18px; border-radius:30px; }
+    .logo-wrap { width:88px; height:88px; margin-bottom:20px; }
+    .logo-icon { font-size:46px; border-radius:24px; }
+    .logo-shine { border-radius:24px; }
+    h1 { font-size:20px; }
+    .card { padding:28px 16px; border-radius:26px; }
 }
 """
 
@@ -615,9 +620,9 @@ HTML_HOME = """<!DOCTYPE html>
 """ + SHARED_CSS + """
 
 .btn-start {
-    width:100%; padding:20px; border:none; border-radius:22px;
+    width:100%; padding:18px; border:none; border-radius:20px;
     background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);
-    color:white; font-size:18px; font-weight:900;
+    color:white; font-size:17px; font-weight:900;
     font-family:inherit; cursor:pointer;
     box-shadow:
         0 20px 50px rgba(245,87,108,0.5),
@@ -625,7 +630,6 @@ HTML_HOME = """<!DOCTYPE html>
         inset 0 3px 15px rgba(255,255,255,0.25);
     transition:all 0.35s cubic-bezier(0.16,1,0.3,1);
     position:relative; overflow:hidden;
-    letter-spacing:0.3px;
 }
 .btn-start::before {
     content:'';
@@ -635,33 +639,29 @@ HTML_HOME = """<!DOCTYPE html>
     transition:transform 0.8s;
 }
 .btn-start:hover::before { transform:translateX(100%); }
-.btn-start:hover {
-    transform:translateY(-5px) scale(1.02);
-    box-shadow:0 28px 65px rgba(245,87,108,0.65);
-}
+.btn-start:hover { transform:translateY(-4px); }
 .btn-start:active { transform:translateY(-2px) scale(0.99); }
 .btn-start:disabled { opacity:0.7; cursor:wait; }
 
 .steps {
-    margin-top:28px; text-align:left;
+    margin-top:24px; text-align:left;
     background:linear-gradient(135deg,#f9fafb,#f3f4f6);
-    padding:20px; border-radius:20px;
+    padding:18px; border-radius:18px;
     font-size:13px; color:#374151;
-    line-height:1.9; border:1px solid #e5e7eb;
+    line-height:1.8; border:1px solid #e5e7eb;
 }
 .steps-title {
     font-weight:900; color:#667eea;
-    font-size:12px; text-transform:uppercase;
+    font-size:11px; text-transform:uppercase;
     letter-spacing:1px; margin-bottom:12px;
 }
-.step-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.step-row { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
 .step-num {
-    width:24px; height:24px; border-radius:50%;
+    width:22px; height:22px; border-radius:50%;
     background:linear-gradient(135deg,#667eea,#764ba2);
     color:white; font-weight:900; font-size:11px;
     display:flex; align-items:center; justify-content:center;
     flex-shrink:0;
-    box-shadow:0 4px 10px rgba(102,126,234,0.4);
 }
 </style>
 </head>
@@ -680,7 +680,7 @@ HTML_HOME = """<!DOCTYPE html>
     </div>
 
     <h1>Tạo mã QR Zalo</h1>
-    <p class="sub">Quét QR → Đồng ý trên Zalo → Lấy Cookie</p>
+    <p class="sub">Quét QR → Đồng ý trên điện thoại → Lấy Cookie</p>
 
     <button id="btn-start" class="btn-start" onclick="startQR()">
         🚀 TẠO MÃ QR
@@ -690,8 +690,8 @@ HTML_HOME = """<!DOCTYPE html>
         <div class="steps-title">Hướng dẫn</div>
         <div class="step-row"><div class="step-num">1</div><div>Bấm "Tạo mã QR"</div></div>
         <div class="step-row"><div class="step-num">2</div><div>Đợi 15-30s → hiện mã QR</div></div>
-        <div class="step-row"><div class="step-num">3</div><div>Mở app Zalo → Quét QR</div></div>
-        <div class="step-row"><div class="step-num">4</div><div>Trên Zalo PC bấm "Đồng ý"</div></div>
+        <div class="step-row"><div class="step-num">3</div><div>Mở app Zalo → biểu tượng QR → Quét</div></div>
+        <div class="step-row"><div class="step-num">4</div><div>Trên điện thoại hiện thông báo → Bấm "Đồng ý"</div></div>
         <div class="step-row"><div class="step-num">5</div><div>Web tự hiện IMEI + Cookie</div></div>
     </div>
 
@@ -740,24 +740,22 @@ HTML_QR = """<!DOCTYPE html>
 
 .qr-container {
     background:#ffffff;
-    padding:14px;
-    border-radius:20px;
-    margin:0 auto 16px;
-    max-width:240px;
+    padding:12px;
+    border-radius:18px;
+    margin:0 auto 14px;
+    max-width:210px;
     width:100%;
-    box-shadow:
-        0 15px 40px rgba(0,0,0,0.1),
-        0 0 0 1px rgba(0,0,0,0.05);
+    box-shadow:0 12px 35px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.05);
     position:relative;
 }
 .qr-container::before {
     content:'';
     position:absolute; inset:-2px;
-    border-radius:20px;
+    border-radius:18px;
     background:linear-gradient(135deg,#f093fb,#f5576c);
     z-index:-1;
     opacity:0.5;
-    filter:blur(12px);
+    filter:blur(10px);
     animation:qrGlow 3s ease-in-out infinite;
 }
 @keyframes qrGlow {
@@ -774,19 +772,19 @@ HTML_QR = """<!DOCTYPE html>
 
 .qr-label {
     text-align:center;
-    font-size:12px;
+    font-size:11px;
     color:#6b7280;
     font-weight:600;
-    margin-bottom:16px;
+    margin-bottom:14px;
     padding:0 8px;
     line-height:1.5;
 }
 
 .status {
-    padding:16px; border-radius:16px;
-    font-size:14px; font-weight:800;
-    display:flex; align-items:center; justify-content:center; gap:10px;
-    transition:all 0.4s cubic-bezier(0.16,1,0.3,1);
+    padding:14px; border-radius:14px;
+    font-size:13px; font-weight:800;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    transition:all 0.4s;
 }
 .status.waiting {
     background:linear-gradient(135deg,#fef3c7,#fde68a);
@@ -795,31 +793,22 @@ HTML_QR = """<!DOCTYPE html>
 }
 @keyframes waitingPulse {
     0%,100% { transform:scale(1); box-shadow:0 0 0 0 rgba(251,191,36,0.5); }
-    50% { transform:scale(1.01); box-shadow:0 0 0 12px rgba(251,191,36,0); }
+    50% { transform:scale(1.01); box-shadow:0 0 0 10px rgba(251,191,36,0); }
 }
 .status.error { background:linear-gradient(135deg,#fee2e2,#fecaca); color:#991b1b; }
 .status.expired { background:linear-gradient(135deg,#f3f4f6,#e5e7eb); color:#374151; }
 
 .confirm-btn {
     width:100%;
-    margin-top:14px;
-    padding:16px;
+    margin-top:12px;
+    padding:14px;
     background:linear-gradient(135deg,#10b981,#059669);
-    color:white; border:none; border-radius:16px;
-    font-size:14px; font-weight:900;
+    color:white; border:none; border-radius:14px;
+    font-size:13px; font-weight:900;
     font-family:inherit; cursor:pointer;
-    box-shadow:0 12px 30px rgba(16,185,129,0.4);
+    box-shadow:0 10px 25px rgba(16,185,129,0.4);
     transition:all 0.3s;
-    position:relative; overflow:hidden;
 }
-.confirm-btn::before {
-    content:'';
-    position:absolute; inset:0;
-    background:linear-gradient(120deg,transparent,rgba(255,255,255,0.4),transparent);
-    transform:translateX(-100%);
-    transition:transform 0.6s;
-}
-.confirm-btn:hover::before { transform:translateX(100%); }
 .confirm-btn:hover { transform:translateY(-2px); }
 .confirm-btn:disabled { opacity:0.7; cursor:wait; }
 
@@ -833,9 +822,9 @@ HTML_QR = """<!DOCTYPE html>
 }
 
 .success-header {
-    text-align:center; padding:20px;
+    text-align:center; padding:18px;
     background:linear-gradient(135deg,#d1fae5,#a7f3d0);
-    border-radius:20px; margin-bottom:18px;
+    border-radius:18px; margin-bottom:16px;
     position:relative; overflow:hidden;
 }
 .success-header::before {
@@ -850,8 +839,8 @@ HTML_QR = """<!DOCTYPE html>
     50%,100% { transform:translateX(100%); }
 }
 .success-icon {
-    font-size:52px; line-height:1;
-    margin-bottom:8px;
+    font-size:46px; line-height:1;
+    margin-bottom:6px;
     animation:successBounce 0.8s cubic-bezier(0.16,1,0.3,1);
 }
 @keyframes successBounce {
@@ -860,69 +849,69 @@ HTML_QR = """<!DOCTYPE html>
     100% { transform:scale(1); }
 }
 .success-title {
-    font-size:18px; font-weight:900;
+    font-size:16px; font-weight:900;
     color:#065f46;
 }
 
 .result {
-    padding:16px; border-radius:16px;
+    padding:14px; border-radius:14px;
     background:linear-gradient(135deg,#ecfdf5,#d1fae5);
-    margin-bottom:12px;
+    margin-bottom:10px;
     border:1px solid #a7f3d0;
 }
 .result .label {
-    font-size:11px; color:#065f46;
+    font-size:10px; color:#065f46;
     text-transform:uppercase; font-weight:900;
-    letter-spacing:1px; margin-bottom:8px;
+    letter-spacing:1px; margin-bottom:6px;
 }
 .result .value {
-    font-family:'SF Mono',Monaco,Consolas,monospace;
-    font-size:12px; color:#065f46;
-    word-break:break-all; line-height:1.6;
+    font-family:monospace;
+    font-size:11px; color:#065f46;
+    word-break:break-all; line-height:1.5;
     font-weight:600;
 }
 .result .value.scroll {
-    max-height:180px; overflow-y:auto;
+    max-height:150px; overflow-y:auto;
     background:rgba(255,255,255,0.6);
-    padding:10px; border-radius:8px;
+    padding:8px; border-radius:8px;
     margin-top:6px;
 }
-.result .value.scroll::-webkit-scrollbar { width:5px; }
+.result .value.scroll::-webkit-scrollbar { width:4px; }
 .result .value.scroll::-webkit-scrollbar-thumb {
-    background:#a7f3d0; border-radius:3px;
+    background:#a7f3d0; border-radius:2px;
 }
 
 .copy-btn {
-    width:100%; padding:15px; border:none;
-    border-radius:14px;
+    width:100%; padding:14px; border:none;
+    border-radius:12px;
     background:linear-gradient(135deg,#667eea,#764ba2);
-    color:white; font-size:14px; font-weight:900;
+    color:white; font-size:13px; font-weight:900;
     font-family:inherit; cursor:pointer;
     margin-top:8px;
     box-shadow:0 10px 25px rgba(102,126,234,0.4);
     transition:all 0.3s;
 }
-.copy-btn:hover { transform:translateY(-3px); }
+.copy-btn:hover { transform:translateY(-2px); }
 .copy-btn.green { background:linear-gradient(135deg,#10b981,#059669); }
 .copy-btn.purple { background:linear-gradient(135deg,#8b5cf6,#7c3aed); }
 .copy-btn.blue { background:linear-gradient(135deg,#3b82f6,#2563eb); }
 
 .hint {
-    margin-top:12px; font-size:11px;
+    margin-top:10px; font-size:11px;
     color:#6b7280; text-align:center;
-    font-weight:600; line-height:1.6;
+    font-weight:600; line-height:1.5;
 }
 
 .toast {
     position:fixed; bottom:24px; left:50%;
     transform:translateX(-50%);
     background:linear-gradient(135deg,#10b981,#059669);
-    color:white; padding:14px 28px;
+    color:white; padding:12px 24px;
     border-radius:50px; font-weight:900;
-    font-size:14px;
+    font-size:13px;
     box-shadow:0 20px 50px rgba(16,185,129,0.6);
     z-index:9999;
-    animation:toastIn 0.4s cubic-bezier(0.16,1,0.3,1);
+    animation:toastIn 0.4s;
 }
 @keyframes toastIn {
     from { opacity:0; transform:translateX(-50%) translateY(40px) scale(0.8); }
@@ -934,9 +923,9 @@ HTML_QR = """<!DOCTYPE html>
 }
 
 @media (max-width:640px) {
-    .qr-container { max-width:200px; padding:12px; }
-    .success-icon { font-size:44px; }
-    .success-title { font-size:16px; }
+    .qr-container { max-width:180px; padding:10px; }
+    .success-icon { font-size:40px; }
+    .success-title { font-size:14px; }
 }
 </style>
 </head>
@@ -955,19 +944,19 @@ HTML_QR = """<!DOCTYPE html>
     </div>
 
     <h1>Quét QR Zalo</h1>
-    <p class="sub">Quét → Đồng ý trên PC → Lấy Cookie</p>
+    <p class="sub">Quét → Đồng ý trên điện thoại</p>
 
     <div id="qr-area">
         <div class="qr-container">
             <img src="/qr-image/{{ session_id }}" alt="QR">
         </div>
         <div class="qr-label">
-            📱 Sau khi quét → bấm "Đồng ý" trên Zalo PC
+            📱 Mở app Zalo → QR → Quét mã
         </div>
     </div>
 
     <div id="status" class="status waiting">
-        <span style="font-size:18px;">⏳</span>
+        <span style="font-size:16px;">⏳</span>
         <span>Đang chờ quét...</span>
     </div>
 
@@ -990,17 +979,17 @@ async function check() {
 
         if (d.status === 'waiting' || d.status === 'creating') {
             el.className = 'status waiting';
-            el.innerHTML = '<span style="font-size:18px;">⏳</span><span>Đang chờ quét...</span>';
+            el.innerHTML = '<span style="font-size:16px;">⏳</span><span>Đang chờ quét...</span>';
         } else if (d.status === 'done') {
             done = true;
             showResult(d);
         } else if (d.status === 'error') {
             el.className = 'status error';
-            el.innerHTML = '<span style="font-size:18px;">❌</span><span>' + (d.error || 'Lỗi') + '</span>';
+            el.innerHTML = '<span style="font-size:16px;">❌</span><span>' + (d.error || 'Lỗi') + '</span>';
             done = true;
         } else if (d.status === 'expired') {
             el.className = 'status expired';
-            el.innerHTML = '<span style="font-size:18px;">⏰</span><span>QR hết hạn. Tạo lại.</span>';
+            el.innerHTML = '<span style="font-size:16px;">⏰</span><span>QR hết hạn. Tạo lại.</span>';
             done = true;
         }
     } catch (e) {}
@@ -1130,19 +1119,19 @@ HTML_EXPIRED = """<!DOCTYPE html>
 <style>
 """ + SHARED_CSS + """
 
-.expired-icon { font-size:72px; margin-bottom:20px; animation:iconWobble 2s ease-in-out infinite; }
+.expired-icon { font-size:64px; margin-bottom:18px; animation:iconWobble 2s ease-in-out infinite; }
 @keyframes iconWobble {
     0%,100% { transform:rotate(0deg); }
     25% { transform:rotate(-8deg); }
     75% { transform:rotate(8deg); }
 }
-.expired-title { color:#1a1a2e; margin-bottom:14px; font-size:24px; font-weight:900; }
-.expired-text { color:#6b7280; font-size:14px; margin-bottom:24px; line-height:1.7; }
+.expired-title { color:#1a1a2e; margin-bottom:12px; font-size:22px; font-weight:900; }
+.expired-text { color:#6b7280; font-size:13px; margin-bottom:22px; line-height:1.7; }
 .expired-btn {
-    display:inline-block; padding:16px 32px;
+    display:inline-block; padding:14px 28px;
     background:linear-gradient(135deg,#667eea,#764ba2);
-    color:white; border-radius:16px;
-    text-decoration:none; font-weight:900; font-size:14px;
+    color:white; border-radius:14px;
+    text-decoration:none; font-weight:900; font-size:13px;
     box-shadow:0 15px 40px rgba(102,126,234,0.5);
     transition:all 0.3s;
 }
@@ -1156,7 +1145,7 @@ HTML_EXPIRED = """<!DOCTYPE html>
 <div class="card">
     <div class="expired-icon">⏰</div>
     <div class="expired-title">Session hết hạn</div>
-    <div class="expired-text">Session QR này đã hết hạn.<br>Vui lòng tạo mã QR mới.</div>
+    <div class="expired-text">Vui lòng tạo mã QR mới.</div>
     <a href="/" class="expired-btn">🔄 Tạo QR mới</a>
 </div>
 </body>
