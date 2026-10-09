@@ -1,202 +1,173 @@
 # ============================================================
-# WEB-QR v16.0 — Tạo QR Zalo qua Browserless.io
-# Không cần Chromium trên Render — dùng server Browserless
+# WEB-QR v17.0 — Tạo QR Zalo (Chromium nội bộ)
+# Bot by Anh Khôi
 # ============================================================
 import os
 import io
 import time
-import json
 import uuid
-import base64
+import asyncio
 import threading
 
 from flask import Flask, request, jsonify, render_template_string, Response
-import requests
 
-# ============================================================
-# CONFIG
-# ============================================================
-BROWSERLESS_KEY = os.environ.get("BROWSERLESS_KEY", "")
-QR_TTL = 300  # 5 phút
+QR_TTL = 300
 
 app = Flask(__name__)
 QR_SESSIONS = {}
 
 
 # ============================================================
-# BROWSERLESS API
+# ZALO QR LOGIN
 # ============================================================
-def browserless_content(url, wait_ms=5000):
-    """
-    Gọi Browserless để lấy HTML của trang.
-    """
-    api_url = f"https://chrome.browserless.io/content?token={BROWSERLESS_KEY}"
-    payload = {
-        "url": url,
-        "gotoOptions": {
-            "waitUntil": "networkidle2",
-            "timeout": 30000,
-        },
-        "waitFor": wait_ms,
-    }
-    headers = {"Content-Type": "application/json"}
-    r = requests.post(api_url, json=payload, headers=headers, timeout=60)
-    return r
+class ZaloQR:
+    def __init__(self):
+        self.browser = None
+        self.playwright = None
 
+    async def start(self):
+        from playwright.async_api import async_playwright
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
+                "--window-size=600,800",
+            ],
+        )
 
-def browserless_screenshot(url, wait_ms=5000):
-    """
-    Gọi Browserless để chụp ảnh trang.
-    """
-    api_url = f"https://chrome.browserless.io/screenshot?token={BROWSERLESS_KEY}"
-    payload = {
-        "url": url,
-        "options": {
-            "fullPage": False,
-            "type": "png",
-        },
-        "gotoOptions": {
-            "waitUntil": "networkidle2",
-            "timeout": 30000,
-        },
-        "waitFor": wait_ms,
-    }
-    headers = {"Content-Type": "application/json"}
-    r = requests.post(api_url, json=payload, headers=headers, timeout=60)
-    return r
+    async def create_qr(self, session_id):
+        try:
+            await self.start()
+            ctx = await self.browser.new_context(
+                viewport={"width": 600, "height": 800},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/122.0.0.0 Safari/537.36"
+                ),
+                locale="vi-VN",
+            )
+            page = await ctx.new_page()
+            await page.goto(
+                "https://chat.zalo.me/",
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+            await asyncio.sleep(3)
 
+            # Chuyển sang tab QR
+            try:
+                btn = await page.wait_for_selector(
+                    "text=/QR|Quét mã/i", timeout=5000
+                )
+                await btn.click()
+                await asyncio.sleep(2)
+            except Exception:
+                pass
 
-def browserless_evaluate(url, script, wait_ms=5000):
-    """
-    Gọi Browserless để chạy JavaScript và lấy kết quả.
-    """
-    api_url = f"https://chrome.browserless.io/function?token={BROWSERLESS_KEY}"
-    payload = {
-        "code": f"""
-        module.exports = async function({{ page }}) {{
-            await page.goto("{url}", {{ waitUntil: "networkidle2", timeout: 30000 }});
-            await new Promise(r => setTimeout(r, {wait_ms}));
-            const result = await page.evaluate(() => {{
-                {script}
-            }});
-            return {{ data: result, type: 'application/json' }};
-        }}
-        """,
-    }
-    headers = {"Content-Type": "application/json"}
-    r = requests.post(api_url, json=payload, headers=headers, timeout=60)
-    return r
+            await asyncio.sleep(3)
 
+            png = await page.screenshot(full_page=False)
+            try:
+                from PIL import Image
+                img = Image.open(io.BytesIO(png))
+                w, h = img.size
+                img = img.crop((
+                    int(w * 0.15), int(h * 0.15),
+                    int(w * 0.85), int(h * 0.85)
+                ))
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                buf.seek(0)
+                png = buf.getvalue()
+            except Exception:
+                pass
 
-# ============================================================
-# QR SESSION WORKER
-# ============================================================
-def create_qr_session(session_id):
-    """
-    Tạo session QR — dùng Browserless để lấy ảnh QR và cookie.
-    """
-    try:
-        # Bước 1: Chụp ảnh trang chat.zalo.me
-        print(f"[QR] Bắt đầu tạo session {session_id}")
-        r = browserless_screenshot("https://chat.zalo.me/", wait_ms=8000)
-
-        if r.status_code != 200:
             QR_SESSIONS[session_id] = {
-                "status": "error",
-                "error": f"Browserless lỗi: HTTP {r.status_code} - {r.text[:200]}",
+                "page": page,
+                "browser": self.browser,
+                "playwright": self.playwright,
+                "png": png,
                 "created_at": time.time(),
+                "status": "waiting",
+                "cookies": None,
+                "imei": None,
             }
-            return
 
-        png_data = r.content
-
-        # Cắt ảnh QR (giữa màn hình)
-        try:
-            from PIL import Image
-            img = Image.open(io.BytesIO(png_data))
-            w, h = img.size
-            img = img.crop((
-                int(w * 0.15), int(h * 0.15),
-                int(w * 0.85), int(h * 0.85)
-            ))
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            buf.seek(0)
-            png_data = buf.getvalue()
-        except Exception:
-            pass
-
-        QR_SESSIONS[session_id] = {
-            "png": png_data,
-            "status": "waiting",
-            "created_at": time.time(),
-            "cookies": None,
-            "imei": None,
-        }
-
-        print(f"[QR] Session {session_id} đã có ảnh QR")
-
-        # Bước 2: Poll để lấy cookie
-        threading.Thread(
-            target=poll_login,
-            args=(session_id,),
-            daemon=True,
-        ).start()
-
-    except Exception as e:
-        QR_SESSIONS[session_id] = {
-            "status": "error",
-            "error": str(e),
-            "created_at": time.time(),
-        }
-        print(f"[QR] Lỗi: {e}")
-
-
-def poll_login(session_id):
-    """
-    Poll bằng Browserless để lấy cookie sau khi user quét.
-    Gọi lại mỗi 5 giây cho đến khi có cookie hoặc hết hạn.
-    """
-    start = time.time()
-    while time.time() - start < QR_TTL:
-        try:
-            # Gọi Browserless để lấy cookie hiện tại
-            script = """
-                const ck = {};
-                document.cookie.split(';').forEach(c => {
-                    const p = c.trim().split('=');
-                    if (p.length >= 2) ck[p[0]] = p.slice(1).join('=');
-                });
-                const imei = localStorage.getItem('imei')
-                    || localStorage.getItem('zpw_imei')
-                    || localStorage.getItem('device_id')
-                    || '000000000000000';
-                return { cookies: ck, imei: imei, url: window.location.href };
-            """
-            r = browserless_evaluate("https://chat.zalo.me/", script, wait_ms=3000)
-
-            if r.status_code == 200:
-                data = r.json()
-                result = data.get("data", {})
-                ck = result.get("cookies", {})
-                imei = result.get("imei", "")
-                url = result.get("url", "")
-
-                # Nếu URL đổi sang chat chính hoặc có cookie zalo đủ
-                if ("chat.zalo.me" in url and "login" not in url) or \
-                   ("zpw_sek" in ck and "zalo_u_id" in ck):
-                    QR_SESSIONS[session_id]["status"] = "done"
-                    QR_SESSIONS[session_id]["cookies"] = ck
-                    QR_SESSIONS[session_id]["imei"] = imei or "000000000000000"
-                    print(f"[QR] Session {session_id} DONE - UID: {ck.get('zalo_u_id')}")
-                    return
+            threading.Thread(
+                target=lambda: asyncio.run(self._poll(page, session_id)),
+                daemon=True,
+            ).start()
 
         except Exception as e:
-            print(f"[QR] Poll lỗi: {e}")
+            QR_SESSIONS[session_id] = {
+                "status": "error",
+                "error": str(e),
+                "created_at": time.time(),
+            }
 
-        time.sleep(5)
+    async def _poll(self, page, session_id):
+        start = time.time()
+        while time.time() - start < QR_TTL:
+            try:
+                url = page.url
+                if "chat.zalo.me" in url and "login" not in url:
+                    return await self._extract(session_id, page)
+                if "id.zalo.me" in url and "account" not in url:
+                    return await self._extract(session_id, page)
+            except Exception:
+                pass
+            await asyncio.sleep(2)
 
-    QR_SESSIONS[session_id]["status"] = "expired"
+        if session_id in QR_SESSIONS:
+            QR_SESSIONS[session_id]["status"] = "expired"
+        await self._close(session_id)
+
+    async def _extract(self, session_id, page):
+        try:
+            await asyncio.sleep(3)
+            cookies = await page.context.cookies()
+            ck = {}
+            for c in cookies:
+                if "zalo" in c.get("domain", ""):
+                    ck[c["name"]] = c["value"]
+
+            imei = ""
+            for k in ["imei", "zpw_imei", "device_id"]:
+                try:
+                    v = await page.evaluate(f"localStorage.getItem('{k}')")
+                    if v:
+                        imei = v
+                        break
+                except Exception:
+                    pass
+
+            if session_id in QR_SESSIONS:
+                QR_SESSIONS[session_id]["status"] = "done"
+                QR_SESSIONS[session_id]["cookies"] = ck
+                QR_SESSIONS[session_id]["imei"] = imei or "000000000000000"
+
+            await self._close(session_id)
+        except Exception as e:
+            if session_id in QR_SESSIONS:
+                QR_SESSIONS[session_id]["status"] = "error"
+                QR_SESSIONS[session_id]["error"] = str(e)
+
+    async def _close(self, session_id):
+        if session_id not in QR_SESSIONS:
+            return
+        s = QR_SESSIONS[session_id]
+        try:
+            if s.get("browser"):
+                await s["browser"].close()
+            if s.get("playwright"):
+                await s["playwright"].stop()
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -204,20 +175,14 @@ def poll_login(session_id):
 # ============================================================
 @app.route("/api/qr/create", methods=["POST"])
 def api_qr_create():
-    if not BROWSERLESS_KEY:
-        return jsonify({
-            "error": "Chưa cấu hình BROWSERLESS_KEY. Vào Render → Environment → thêm env này."
-        }), 500
-
     session_id = uuid.uuid4().hex[:16]
 
-    threading.Thread(
-        target=create_qr_session,
-        args=(session_id,),
-        daemon=True,
-    ).start()
+    def run():
+        qr = ZaloQR()
+        asyncio.run(qr.create_qr(session_id))
 
-    # Đợi QR render xong (tối đa 40s)
+    threading.Thread(target=run, daemon=True).start()
+
     start = time.time()
     while time.time() - start < 40:
         if session_id in QR_SESSIONS:
@@ -257,9 +222,6 @@ def qr_image(session_id):
     return Response(s["png"], mimetype="image/png")
 
 
-# ============================================================
-# PAGES
-# ============================================================
 @app.route("/")
 def home():
     return render_template_string(HTML_HOME)
@@ -277,14 +239,13 @@ def health():
     return jsonify({
         "status": "ok",
         "service": "web-qr",
-        "version": "16.0-browserless",
+        "version": "17.0",
         "sessions": len(QR_SESSIONS),
-        "browserless_configured": bool(BROWSERLESS_KEY),
     })
 
 
 # ============================================================
-# HTML — TRANG CHỦ
+# HTML
 # ============================================================
 HTML_HOME = """
 <!DOCTYPE html>
@@ -297,16 +258,14 @@ HTML_HOME = """
 <style>
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 body { font-family:'Inter',sans-serif; min-height:100vh; min-height:100dvh; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#f093fb,#f5576c); padding:20px; }
-.card { background:white; padding:50px 40px; border-radius:32px; box-shadow:0 30px 80px rgba(0,0,0,0.3); text-align:center; max-width:520px; width:100%; animation:slideUp 0.7s cubic-bezier(0.16,1,0.3,1); }
-@keyframes slideUp { from { opacity:0; transform:translateY(40px); } to { opacity:1; transform:translateY(0); } }
+.card { background:white; padding:50px 40px; border-radius:32px; box-shadow:0 30px 80px rgba(0,0,0,0.3); text-align:center; max-width:520px; width:100%; }
 .logo { width:90px; height:90px; border-radius:28px; background:linear-gradient(135deg,#f093fb,#f5576c); display:flex; align-items:center; justify-content:center; font-size:48px; margin:0 auto 24px; box-shadow:0 20px 50px rgba(245,87,108,0.5); }
 h1 { color:#1a1a2e; margin-bottom:12px; font-size:28px; font-weight:900; }
 p.sub { color:#6b7280; margin-bottom:32px; font-size:15px; }
-button { width:100%; padding:20px; border:none; border-radius:20px; background:linear-gradient(135deg,#f093fb,#f5576c); color:white; font-size:18px; font-weight:900; font-family:inherit; cursor:pointer; box-shadow:0 15px 40px rgba(245,87,108,0.45); transition:all 0.3s; }
-button:hover { transform:translateY(-4px); box-shadow:0 22px 55px rgba(245,87,108,0.6); }
+button { width:100%; padding:20px; border:none; border-radius:20px; background:linear-gradient(135deg,#f093fb,#f5576c); color:white; font-size:18px; font-weight:900; font-family:inherit; cursor:pointer; box-shadow:0 15px 40px rgba(245,87,108,0.45); }
+button:hover { transform:translateY(-4px); }
 button:disabled { opacity:0.6; cursor:wait; }
 .steps { margin-top:32px; text-align:left; background:#f9fafb; padding:20px; border-radius:16px; font-size:14px; color:#374151; line-height:1.9; }
-.steps b { color:#667eea; }
 </style>
 </head>
 <body>
@@ -323,12 +282,11 @@ button:disabled { opacity:0.6; cursor:wait; }
         4️⃣ Copy IMEI + Cookie
     </div>
 </div>
-
 <script>
 async function startQR() {
     const btn = document.getElementById('btn-start');
     btn.disabled = true;
-    btn.textContent = '⏳ Đang tạo QR...';
+    btn.textContent = '⏳ Đang tạo QR... (đợi 15-30s)';
     try {
         const r = await fetch('/api/qr/create', { method: 'POST' });
         const d = await r.json();
@@ -357,11 +315,11 @@ HTML_QR = """
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Quét QR Zalo</title>
+<title>Quét QR</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'Inter',sans-serif; min-height:100vh; min-height:100dvh; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#f093fb,#f5576c); padding:20px; }
+body { font-family:'Inter',sans-serif; min-height:100vh; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#f093fb,#f5576c); padding:20px; }
 .card { background:white; padding:36px; border-radius:32px; box-shadow:0 30px 80px rgba(0,0,0,0.3); text-align:center; max-width:560px; width:100%; }
 h1 { color:#1a1a2e; margin-bottom:8px; font-size:24px; font-weight:900; }
 p.sub { color:#6b7280; margin-bottom:24px; font-size:14px; }
@@ -369,14 +327,13 @@ p.sub { color:#6b7280; margin-bottom:24px; font-size:14px; }
 .qr-box img { max-width:100%; border-radius:14px; display:block; margin:0 auto; }
 .status { padding:18px; border-radius:16px; font-size:15px; font-weight:800; }
 .status.waiting { background:#fef3c7; color:#92400e; }
-.status.done { background:transparent; }
 .status.error { background:#fee2e2; color:#991b1b; }
 .status.expired { background:#f3f4f6; color:#374151; }
 .result { text-align:left; padding:16px; border-radius:16px; background:linear-gradient(135deg,#d1fae5,#a7f3d0); margin-bottom:12px; }
 .result .label { font-size:11px; color:#065f46; text-transform:uppercase; font-weight:900; margin-bottom:6px; }
 .result .value { font-family:monospace; font-size:13px; color:#065f46; word-break:break-all; line-height:1.5; }
 .result .value.scroll { max-height:180px; overflow-y:auto; background:rgba(255,255,255,0.5); padding:10px; border-radius:8px; }
-.copy-btn { width:100%; padding:16px; border:none; border-radius:14px; background:linear-gradient(135deg,#667eea,#764ba2); color:white; font-size:15px; font-weight:900; font-family:inherit; cursor:pointer; margin-top:10px; }
+.copy-btn { width:100%; padding:16px; border:none; border-radius:14px; background:linear-gradient(135deg,#667eea,#764ba2); color:white; font-size:15px; font-weight:900; cursor:pointer; margin-top:10px; }
 .copy-btn.green { background:linear-gradient(135deg,#10b981,#059669); }
 </style>
 </head>
@@ -387,11 +344,9 @@ p.sub { color:#6b7280; margin-bottom:24px; font-size:14px; }
     <div class="qr-box" id="qr-box"><img src="/qr-image/{{ session_id }}" alt="QR"></div>
     <div id="status" class="status waiting">⏳ Đang chờ quét...</div>
 </div>
-
 <script>
 const sessionId = "{{ session_id }}";
 let done = false;
-
 async function check() {
     if (done) return;
     try {
@@ -410,12 +365,11 @@ async function check() {
             done = true;
         } else if (d.status === 'expired') {
             el.className = 'status expired';
-            el.textContent = '⏰ QR hết hạn. Tải lại trang.';
+            el.textContent = '⏰ QR hết hạn';
             done = true;
         }
     } catch (e) {}
 }
-
 function showResult(d) {
     const imei = d.imei || '000000000000000';
     const cookies = d.cookies || {};
@@ -423,7 +377,6 @@ function showResult(d) {
     const combo = imei + '|' + cookiesStr;
     document.getElementById('qr-box').style.display = 'none';
     const el = document.getElementById('status');
-    el.className = 'status done';
     el.innerHTML = `
         <div style="text-align:center; padding:16px; background:#d1fae5; border-radius:16px; margin-bottom:16px;">
             <div style="font-size:44px;">✅</div>
@@ -440,17 +393,11 @@ function showResult(d) {
         <button class="copy-btn green" onclick="copyIt('${combo.replace(/'/g,"\\\\'")}')">📋 COPY IMEI + COOKIE</button>
     `;
 }
-
 function copyIt(text) {
     navigator.clipboard.writeText(text).then(() => {
-        const t = document.createElement('div');
-        t.textContent = '✅ Đã copy!';
-        t.style.cssText = 'position:fixed;bottom:30px;left:50%;transform:translateX(-50%);background:#10b981;color:white;padding:14px 28px;border-radius:30px;font-weight:800;z-index:9999;';
-        document.body.appendChild(t);
-        setTimeout(() => t.remove(), 2000);
+        alert('✅ Đã copy!');
     }).catch(() => prompt('Copy:', text));
 }
-
 setInterval(check, 2000);
 check();
 </script>
@@ -489,9 +436,6 @@ a { display:inline-block; padding:16px 32px; background:linear-gradient(135deg,#
 """
 
 
-# ============================================================
-# MAIN
-# ============================================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
