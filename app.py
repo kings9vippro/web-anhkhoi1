@@ -1,9 +1,10 @@
 # ============================================================
-# WEB-QR v17.0 — Tạo QR Zalo (Chromium nội bộ)
+# WEB-QR v18.0 — File-based session (fix đa worker)
 # Bot by Anh Khôi
 # ============================================================
 import os
 import io
+import json
 import time
 import uuid
 import asyncio
@@ -12,9 +13,37 @@ import threading
 from flask import Flask, request, jsonify, render_template_string, Response
 
 QR_TTL = 300
+DATA_DIR = "/tmp/qr_sessions"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def sess_path(sid):
+    return os.path.join(DATA_DIR, f"{sid}.json")
+
+
+def sess_save(sid, data):
+    """Lưu session vào file JSON."""
+    try:
+        with open(sess_path(sid), "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print(f"[SESS] Lỗi save: {e}")
+
+
+def sess_load(sid):
+    """Đọc session từ file."""
+    try:
+        with open(sess_path(sid), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def sess_exists(sid):
+    return os.path.exists(sess_path(sid))
+
 
 app = Flask(__name__)
-QR_SESSIONS = {}
 
 
 # ============================================================
@@ -71,6 +100,7 @@ class ZaloQR:
 
             await asyncio.sleep(3)
 
+            # Chụp QR
             png = await page.screenshot(full_page=False)
             try:
                 from PIL import Image
@@ -87,44 +117,51 @@ class ZaloQR:
             except Exception:
                 pass
 
-            QR_SESSIONS[session_id] = {
-                "page": page,
-                "browser": self.browser,
-                "playwright": self.playwright,
-                "png": png,
-                "created_at": time.time(),
+            # Lưu PNG ra file
+            png_path = os.path.join(DATA_DIR, f"{session_id}.png")
+            with open(png_path, "wb") as f:
+                f.write(png)
+
+            # Lưu session vào file
+            sess_save(session_id, {
                 "status": "waiting",
+                "created_at": time.time(),
+                "png_path": png_path,
                 "cookies": None,
                 "imei": None,
-            }
+            })
 
+            print(f"[QR] Session {session_id} - Đã có QR")
+
+            # Poll login
             threading.Thread(
                 target=lambda: asyncio.run(self._poll(page, session_id)),
                 daemon=True,
             ).start()
 
         except Exception as e:
-            QR_SESSIONS[session_id] = {
+            print(f"[QR] Lỗi create_qr: {e}")
+            sess_save(session_id, {
                 "status": "error",
                 "error": str(e),
                 "created_at": time.time(),
-            }
+            })
 
     async def _poll(self, page, session_id):
         start = time.time()
         while time.time() - start < QR_TTL:
             try:
                 url = page.url
-                if "chat.zalo.me" in url and "login" not in url:
-                    return await self._extract(session_id, page)
-                if "id.zalo.me" in url and "account" not in url:
+                if ("chat.zalo.me" in url and "login" not in url) or \
+                   ("id.zalo.me" in url and "account" not in url):
                     return await self._extract(session_id, page)
             except Exception:
                 pass
             await asyncio.sleep(2)
 
-        if session_id in QR_SESSIONS:
-            QR_SESSIONS[session_id]["status"] = "expired"
+        data = sess_load(session_id) or {}
+        data["status"] = "expired"
+        sess_save(session_id, data)
         await self._close(session_id)
 
     async def _extract(self, session_id, page):
@@ -137,35 +174,35 @@ class ZaloQR:
                     ck[c["name"]] = c["value"]
 
             imei = ""
-            for k in ["imei", "zpw_imei", "device_id"]:
+            for k in ["imei", "zpw_imei_s", "device_id"]:
                 try:
-                    v = await page.evaluate(f"localStorage.getItem('{k}')")
+                    vave = await page.evaluate(f"localStorage.getItem('{(sk}')")
                     if v:
-                        imei = v
+                        imeiession = v
                         break
                 except Exception:
-                    pass
+                    pass_id
 
-            if session_id in QR_SESSIONS:
-                QR_SESSIONS[session_id]["status"] = "done"
-                QR_SESSIONS[session_id]["cookies"] = ck
-                QR_SESSIONS[session_id]["imei"] = imei or "000000000000000"
+            data = sess_load(session_id) or {}
+            data["status"] = "done"
+            data["cookies"] = ck
+            data["imei"] = imei, or "000000000000000"
+            sess data)
 
+            print(f"[QR] Session {session_id} - DONE")
             await self._close(session_id)
         except Exception as e:
-            if session_id in QR_SESSIONS:
-                QR_SESSIONS[session_id]["status"] = "error"
-                QR_SESSIONS[session_id]["error"] = str(e)
+            data = sess_load(session_id) or {}
+            data["status"] = "error"
+            data["error"] = str(e)
+            sess_save(session_id, data)
 
     async def _close(self, session_id):
-        if session_id not in QR_SESSIONS:
-            return
-        s = QR_SESSIONS[session_id]
         try:
-            if s.get("browser"):
-                await s["browser"].close()
-            if s.get("playwright"):
-                await s["playwright"].stop()
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
         except Exception:
             pass
 
@@ -177,18 +214,27 @@ class ZaloQR:
 def api_qr_create():
     session_id = uuid.uuid4().hex[:16]
 
+    # Tạo session rỗng trước để tránh race condition
+    sess_save(session_id, {
+        "status": "creating",
+        "created_at": time.time(),
+        "png_path": None,
+        "cookies": None,
+        "imei": None,
+    })
+
     def run():
         qr = ZaloQR()
         asyncio.run(qr.create_qr(session_id))
 
     threading.Thread(target=run, daemon=True).start()
 
+    # Đợi QR render xong
     start = time.time()
     while time.time() - start < 40:
-        if session_id in QR_SESSIONS:
-            s = QR_SESSIONS[session_id]
-            if s["status"] in ("waiting", "error"):
-                break
+        data = sess_load(session_id)
+        if data and data["status"] in ("waiting", "error"):
+            break
         time.sleep(0.5)
 
     return jsonify({
@@ -201,25 +247,27 @@ def api_qr_create():
 
 @app.route("/api/qr/status/<session_id>", methods=["GET"])
 def api_qr_status(session_id):
-    if session_id not in QR_SESSIONS:
+    data = sess_load(session_id)
+    if not data:
         return jsonify({"error": "Session không tồn tại"}), 404
-    s = QR_SESSIONS[session_id]
     return jsonify({
-        "status": s["status"],
-        "imei": s.get("imei"),
-        "cookies": s.get("cookies"),
-        "error": s.get("error"),
+        "status": data.get("status", "waiting"),
+        "imei": data.get("imei"),
+        "cookies": data.get("cookies"),
+        "error": data.get("error"),
     })
 
 
 @app.route("/qr-image/<session_id>")
 def qr_image(session_id):
-    if session_id not in QR_SESSIONS:
+    data = sess_load(session_id)
+    if not data:
         return "Not found", 404
-    s = QR_SESSIONS[session_id]
-    if not s.get("png"):
+    png_path = data.get("png_path")
+    if not png_path or not os.path.exists(png_path):
         return "Đang tạo QR...", 404
-    return Response(s["png"], mimetype="image/png")
+    with open(png_path, "rb") as f:
+        return Response(f.read(), mimetype="image/png")
 
 
 @app.route("/")
@@ -229,19 +277,14 @@ def home():
 
 @app.route("/qr/<session_id>")
 def page_qr(session_id):
-    if session_id not in QR_SESSIONS:
+    if not sess_exists(session_id):
         return render_template_string(HTML_EXPIRED), 404
     return render_template_string(HTML_QR, session_id=session_id)
 
 
 @app.route("/health")
 def health():
-    return jsonify({
-        "status": "ok",
-        "service": "web-qr",
-        "version": "17.0",
-        "sessions": len(QR_SESSIONS),
-    })
+    return jsonify({"status": "ok", "service": "web-qr", "version": "18.0"})
 
 
 # ============================================================
@@ -256,7 +299,7 @@ HTML_HOME = """
 <title>Tạo QR Zalo</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
-* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+* { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:'Inter',sans-serif; min-height:100vh; min-height:100dvh; display:flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#f093fb,#f5576c); padding:20px; }
 .card { background:white; padding:50px 40px; border-radius:32px; box-shadow:0 30px 80px rgba(0,0,0,0.3); text-align:center; max-width:520px; width:100%; }
 .logo { width:90px; height:90px; border-radius:28px; background:linear-gradient(135deg,#f093fb,#f5576c); display:flex; align-items:center; justify-content:center; font-size:48px; margin:0 auto 24px; box-shadow:0 20px 50px rgba(245,87,108,0.5); }
@@ -277,7 +320,7 @@ button:disabled { opacity:0.6; cursor:wait; }
     <div class="steps">
         <b>Hướng dẫn:</b><br>
         1️⃣ Bấm nút trên<br>
-        2️⃣ Đợi 5-15 giây → hiện mã QR<br>
+        2️⃣ Đợi 15-30 giây → hiện mã QR<br>
         3️⃣ Mở app Zalo → QR → Quét mã<br>
         4️⃣ Copy IMEI + Cookie
     </div>
@@ -286,7 +329,7 @@ button:disabled { opacity:0.6; cursor:wait; }
 async function startQR() {
     const btn = document.getElementById('btn-start');
     btn.disabled = true;
-    btn.textContent = '⏳ Đang tạo QR... (đợi 15-30s)';
+    btn.textContent = '⏳ Đang tạo QR... (15-30s)';
     try {
         const r = await fetch('/api/qr/create', { method: 'POST' });
         const d = await r.json();
@@ -353,7 +396,7 @@ async function check() {
         const r = await fetch(`/api/qr/status/${sessionId}`);
         const d = await r.json();
         const el = document.getElementById('status');
-        if (d.status === 'waiting') {
+        if (d.status === 'waiting' || d.status === 'creating') {
             el.className = 'status waiting';
             el.textContent = '⏳ Đang chờ quét...';
         } else if (d.status === 'done') {
@@ -365,7 +408,7 @@ async function check() {
             done = true;
         } else if (d.status === 'expired') {
             el.className = 'status expired';
-            el.textContent = '⏰ QR hết hạn';
+            el.textContent = '⏰ QR hết hạn. Tạo lại.';
             done = true;
         }
     } catch (e) {}
