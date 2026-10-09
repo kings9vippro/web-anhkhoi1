@@ -1,6 +1,6 @@
 # ============================================================
-# WEB-QR v25.0 — Tạo QR Zalo PC (Bot by Anh Khôi)
-# Dùng URL id.zalo.me — Giống Zalo PC thật
+# WEB-QR v26.0 — Tạo QR Zalo (Bot by Anh Khôi)
+# Chụp FULL page — QR chắc chắn hiện
 # ============================================================
 import os
 import io
@@ -51,7 +51,7 @@ app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR LOGIN — DÙNG ZALO PC URL
+# ZALO QR LOGIN
 # ============================================================
 class ZaloQR:
     def __init__(self):
@@ -73,38 +73,14 @@ class ZaloQR:
         )
 
     async def _capture_qr(self, page):
-        """Chụp ảnh QR hiện tại."""
-        png = None
+        """Chụp full page — đảm bảo QR hiện."""
         try:
-            qr_element = await page.query_selector(
-                "canvas, img[alt*='QR'], img[src*='qr'], "
-                "[class*='qr-code'], [class*='qrcode'], [id*='qr']"
-            )
-            if qr_element:
-                png = await qr_element.screenshot()
-                print("[QR] Chup element QR")
-        except Exception as e:
-            print("[QR] Khong chup element: " + str(e))
-
-        if not png:
             full_png = await page.screenshot(full_page=False)
-            try:
-                from PIL import Image
-                img = Image.open(io.BytesIO(full_png))
-                w, h = img.size
-                img = img.crop((
-                    int(w * 0.15), int(h * 0.20),
-                    int(w * 0.85), int(h * 0.80)
-                ))
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                buf.seek(0)
-                png = buf.getvalue()
-                print("[QR] Chup full + cat giua")
-            except Exception as e:
-                print("[QR] Loi cat anh: " + str(e))
-                png = full_png
-        return png
+            print("[QR] Chup full page - " + str(len(full_png)) + " bytes")
+            return full_png
+        except Exception as e:
+            print("[QR] Loi chup: " + str(e))
+            return None
 
     async def create_qr(self, session_id):
         try:
@@ -120,33 +96,34 @@ class ZaloQR:
             )
             page = await ctx.new_page()
 
-            # ===== ZALO PC URL — TỰ HIỆN QR =====
-            print("[QR] Mo trang Zalo PC: id.zalo.me/account")
+            # Vào chat.zalo.me
+            print("[QR] Mo chat.zalo.me")
             await page.goto(
-                "https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me%2F",
+                "https://chat.zalo.me/",
                 wait_until="networkidle",
                 timeout=60000,
             )
 
-            # Đợi QR render
-            await asyncio.sleep(10)
+            # Đợi trang load
+            await asyncio.sleep(8)
 
-            # Đợi element QR xuất hiện
+            # Click nút QR
             try:
-                await page.wait_for_selector(
-                    "canvas, [class*='qr'], [id*='qr']",
-                    timeout=20000
+                btn = await page.wait_for_selector(
+                    "text=/QR|Quét mã/i", timeout=15000
                 )
-                print("[QR] QR element da xuat hien")
+                await btn.click()
+                print("[QR] Da click tab QR")
             except Exception as e:
-                print("[QR] Khong thay QR: " + str(e))
+                print("[QR] Khong tim thay nut QR: " + str(e))
 
-            await asyncio.sleep(3)
+            # Đợi QR render
+            await asyncio.sleep(6)
 
-            # Chụp QR
+            # Chụp full ảnh
             png = await self._capture_qr(page)
             if not png:
-                raise Exception("Không chụp được QR")
+                raise Exception("Không chụp được ảnh")
 
             png_path = os.path.join(DATA_DIR, session_id + ".png")
             with open(png_path, "wb") as f:
@@ -161,7 +138,7 @@ class ZaloQR:
                 "qr_version": int(time.time()),
             })
 
-            print("[QR] Session " + session_id + " ready - Cho user quet")
+            print("[QR] Session " + session_id + " ready")
 
             ACTIVE_PAGES[session_id] = {
                 "page": page,
@@ -183,17 +160,12 @@ class ZaloQR:
             })
 
     async def _poll(self, page, session_id):
-        """
-        Poll cookie + URL liên tục.
-        Sau khi quét + đồng ý → Zalo PC tự login → cookie zpw_sek xuất hiện.
-        """
         start = time.time()
         check_count = 0
 
         while time.time() - start < QR_TTL:
             check_count += 1
             try:
-                # ===== ĐỌC COOKIE =====
                 cookies = await page.context.cookies()
                 ck_dict = {}
                 for c in cookies:
@@ -205,17 +177,16 @@ class ZaloQR:
                           " | cookies: " + str(len(ck_dict)) +
                           " | has_zpw_sek: " + str("zpw_sek" in ck_dict))
 
-                # ===== PHÁT HIỆN COOKIE ZPW_SEK =====
                 if ck_dict.get("zpw_sek"):
-                    print("[QR] ✅ PHAT HIEN ZPW_SEK - Dang nhap thanh cong!")
+                    print("[QR] ✅ PHAT HIEN ZPW_SEK")
                     await asyncio.sleep(3)
                     return await self._extract(session_id, page)
 
-                # ===== CHECK URL =====
                 url = page.url
-                if "chat.zalo.me" in url and "id.zalo.me" not in url:
-                    print("[QR] URL doi sang chat.zalo.me: " + url)
-                    await asyncio.sleep(5)
+                if ("chat.zalo.me" in url and "/login" not in url
+                        and "qr" not in url.lower()):
+                    print("[QR] URL doi: " + url)
+                    await asyncio.sleep(3)
                     return await self._extract(session_id, page)
 
             except Exception as e:
@@ -240,7 +211,7 @@ class ZaloQR:
                 if "zalo" in c.get("domain", ""):
                     ck[c["name"]] = c["value"]
 
-            print("[QR] Cookies collected: " + str(list(ck.keys())))
+            print("[QR] Cookies: " + str(list(ck.keys())))
 
             imei = ""
             for k in ["imei", "zpw_imei", "device_id", "deviceId"]:
@@ -254,13 +225,11 @@ class ZaloQR:
                 except Exception:
                     pass
 
-            # Thử lấy từ cookie nếu có
             if not imei and ck.get("zpw_imei"):
                 imei = ck["zpw_imei"]
 
             if not imei:
                 imei = gen_imei()
-                print("[QR] IMEI random: " + imei)
 
             data = sess_load(session_id) or {}
             data["status"] = "done"
@@ -269,8 +238,6 @@ class ZaloQR:
             sess_save(session_id, data)
 
             print("[QR] DONE - IMEI: " + imei)
-            print("[QR] Cookies: " + str(len(ck)))
-
             await self._cleanup(session_id)
         except Exception as e:
             print("[QR] Extract error: " + str(e))
@@ -428,7 +395,6 @@ def api_qr_force_extract(session_id):
 
 @app.route("/api/qr/refresh/<session_id>", methods=["POST"])
 def api_qr_refresh(session_id):
-    """Chụp lại QR mới."""
     info = ACTIVE_PAGES.get(session_id)
     if not info:
         return jsonify({"error": "Session đã đóng"}), 404
@@ -437,29 +403,7 @@ def api_qr_refresh(session_id):
         async def _refresh():
             page = info["page"]
             await asyncio.sleep(1)
-
-            png = None
-            qr_element = await page.query_selector(
-                "canvas, img[alt*='QR'], img[src*='qr'], "
-                "[class*='qr-code'], [class*='qrcode'], [id*='qr']"
-            )
-            if qr_element:
-                png = await qr_element.screenshot()
-
-            if not png:
-                full_png = await page.screenshot(full_page=False)
-                from PIL import Image
-                img = Image.open(io.BytesIO(full_png))
-                w, h = img.size
-                img = img.crop((
-                    int(w * 0.15), int(h * 0.20),
-                    int(w * 0.85), int(h * 0.80)
-                ))
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                buf.seek(0)
-                png = buf.getvalue()
-            return png
+            return await page.screenshot(full_page=False)
 
         result = {}
 
@@ -471,7 +415,7 @@ def api_qr_refresh(session_id):
         t.join(timeout=15)
 
         if "png" not in result or not result["png"]:
-            return jsonify({"error": "Không chụp được QR"}), 500
+            return jsonify({"error": "Không chụp được"}), 500
 
         png_path = os.path.join(DATA_DIR, session_id + ".png")
         with open(png_path, "wb") as f:
@@ -481,10 +425,7 @@ def api_qr_refresh(session_id):
         data["qr_version"] = int(time.time())
         sess_save(session_id, data)
 
-        return jsonify({
-            "ok": True,
-            "qr_version": data["qr_version"],
-        })
+        return jsonify({"ok": True, "qr_version": data["qr_version"]})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -525,12 +466,9 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "service": "web-qr", "version": "25.0"})
+    return jsonify({"status": "ok", "version": "26.0"})
 
 
-# ============================================================
-# CSS CHUNG
-# ============================================================
 SHARED_CSS = """
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html { -webkit-text-size-adjust:100%; touch-action:manipulation; }
@@ -541,236 +479,75 @@ body {
     background:linear-gradient(-45deg,#667eea,#764ba2,#f093fb,#f5576c,#667eea);
     background-size:500% 500%;
     animation:gradientShift 18s ease infinite;
-    padding:16px; overflow-x:hidden;
-    position:relative;
+    padding:16px;
 }
 @keyframes gradientShift {
     0% { background-position:0% 50%; }
     50% { background-position:100% 50%; }
     100% { background-position:0% 50%; }
 }
-
-.orb {
-    position:fixed; border-radius:50%;
-    background:radial-gradient(circle,rgba(255,255,255,0.18),transparent 70%);
-    pointer-events:none; z-index:0;
-}
-.orb1 { width:400px; height:400px; top:-100px; left:-100px; animation:float1 20s ease-in-out infinite; }
-.orb2 { width:300px; height:300px; bottom:-80px; right:-80px; animation:float2 15s ease-in-out infinite; }
-.orb3 { width:220px; height:220px; top:55%; left:75%; animation:float3 18s ease-in-out infinite; }
-@keyframes float1 { 0%,100% { transform:translate(0,0) scale(1); } 50% { transform:translate(70px,50px) scale(1.1); } }
-@keyframes float2 { 0%,100% { transform:translate(0,0) scale(1); } 50% { transform:translate(-60px,-70px) scale(1.15); } }
-@keyframes float3 { 0%,100% { transform:translate(0,0) scale(1); } 50% { transform:translate(-40px,90px) scale(0.9); } }
-
-.logo-wrap {
-    position:relative;
-    width:100px; height:100px;
-    margin:0 auto 22px;
-}
-.logo-halo {
-    position:absolute; inset:-22px;
-    border-radius:50%;
-    background:radial-gradient(circle,
-        rgba(245,87,108,0.7) 0%,
-        rgba(240,147,251,0.5) 30%,
-        rgba(102,126,234,0.3) 60%,
-        transparent 80%);
-    filter:blur(16px);
-    animation:haloPulse 3s ease-in-out infinite;
-    z-index:0;
-}
-@keyframes haloPulse {
-    0%,100% { transform:scale(1); opacity:0.7; }
-    50% { transform:scale(1.25); opacity:1; }
-}
-.logo-ring {
-    position:absolute; inset:-10px;
-    border:2px solid transparent;
-    border-top-color:rgba(255,255,255,0.8);
-    border-right-color:rgba(255,255,255,0.3);
-    border-radius:50%;
-    animation:ringRotate 4s linear infinite;
-    z-index:1;
-}
-.logo-ring::before {
-    content:'';
-    position:absolute; inset:6px;
-    border:2px solid transparent;
-    border-bottom-color:rgba(255,255,255,0.6);
-    border-left-color:rgba(255,255,255,0.2);
-    border-radius:50%;
-    animation:ringRotate 3s linear infinite reverse;
-}
-@keyframes ringRotate { to { transform:rotate(360deg); } }
-
-.logo-icon {
-    position:absolute; inset:0;
-    border-radius:28px;
-    background:linear-gradient(135deg,#f093fb 0%,#f5576c 50%,#ee5a6f 100%);
-    display:flex; align-items:center; justify-content:center;
-    font-size:52px;
-    box-shadow:
-        0 25px 60px rgba(245,87,108,0.6),
-        0 12px 30px rgba(240,147,251,0.4),
-        inset 0 -5px 20px rgba(0,0,0,0.2),
-        inset 0 5px 20px rgba(255,255,255,0.5);
-    animation:iconFloat 3.5s ease-in-out infinite;
-    z-index:2;
-}
-@keyframes iconFloat {
-    0%,100% { transform:translateY(0) rotateY(0deg) rotateZ(0deg) scale(1); }
-    25% { transform:translateY(-8px) rotateY(12deg) rotateZ(-4deg) scale(1.03); }
-    50% { transform:translateY(-14px) rotateY(0deg) rotateZ(0deg) scale(1.05); }
-    75% { transform:translateY(-8px) rotateY(-12deg) rotateZ(4deg) scale(1.03); }
-}
-
-.logo-shine {
-    position:absolute; inset:0;
-    border-radius:28px;
-    background:linear-gradient(120deg,
-        transparent 30%,
-        rgba(255,255,255,0.6) 50%,
-        transparent 70%);
-    transform:translateX(-100%);
-    animation:shineMove 3s ease-in-out infinite;
-    z-index:3;
-    pointer-events:none;
-}
-@keyframes shineMove {
-    0% { transform:translateX(-100%) skewX(-20deg); }
-    60%,100% { transform:translateX(200%) skewX(-20deg); }
-}
-
 .card {
     background:rgba(255,255,255,0.98);
     backdrop-filter:blur(30px) saturate(180%);
-    -webkit-backdrop-filter:blur(30px) saturate(180%);
     padding:36px 24px; border-radius:32px;
-    box-shadow:
-        0 40px 100px rgba(0,0,0,0.35),
-        0 0 0 1px rgba(255,255,255,0.6),
-        inset 0 1px 0 rgba(255,255,255,0.9);
-    text-align:center; max-width:480px; width:100%;
-    position:relative; z-index:5;
+    box-shadow:0 40px 100px rgba(0,0,0,0.35);
+    text-align:center; max-width:520px; width:100%;
     animation:cardIn 0.9s cubic-bezier(0.16,1,0.3,1);
 }
 @keyframes cardIn {
     from { opacity:0; transform:translateY(60px) scale(0.94); }
     to { opacity:1; transform:translateY(0) scale(1); }
 }
-
 h1 {
     color:#1a1a2e; margin-bottom:8px;
     font-size:24px; font-weight:900;
-    letter-spacing:-0.6px;
     background:linear-gradient(135deg,#667eea,#764ba2,#f5576c);
     -webkit-background-clip:text;
     -webkit-text-fill-color:transparent;
-    background-clip:text;
 }
-p.sub { color:#6b7280; margin-bottom:22px; font-size:13px; font-weight:500; }
-
-@media (max-width:640px) {
-    .logo-wrap { width:88px; height:88px; margin-bottom:20px; }
-    .logo-icon { font-size:46px; border-radius:24px; }
-    .logo-shine { border-radius:24px; }
-    h1 { font-size:20px; }
-    .card { padding:28px 16px; border-radius:26px; }
-}
+p.sub { color:#6b7280; margin-bottom:22px; font-size:13px; }
 """
 
 
-# ============================================================
-# HTML — TRANG CHỦ
-# ============================================================
 HTML_HOME = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Tạo QR Zalo — ALB Forge</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Tạo QR — ALB</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 """ + SHARED_CSS + """
-
 .btn-start {
     width:100%; padding:18px; border:none; border-radius:20px;
-    background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);
+    background:linear-gradient(135deg,#f093fb,#f5576c);
     color:white; font-size:17px; font-weight:900;
     font-family:inherit; cursor:pointer;
-    box-shadow:
-        0 20px 50px rgba(245,87,108,0.5),
-        inset 0 -3px 15px rgba(0,0,0,0.15),
-        inset 0 3px 15px rgba(255,255,255,0.25);
-    transition:all 0.35s cubic-bezier(0.16,1,0.3,1);
-    position:relative; overflow:hidden;
+    box-shadow:0 20px 50px rgba(245,87,108,0.5);
 }
-.btn-start::before {
-    content:'';
-    position:absolute; inset:0;
-    background:linear-gradient(120deg,transparent 30%,rgba(255,255,255,0.5),transparent 70%);
-    transform:translateX(-100%);
-    transition:transform 0.8s;
-}
-.btn-start:hover::before { transform:translateX(100%); }
 .btn-start:hover { transform:translateY(-4px); }
-.btn-start:active { transform:translateY(-2px) scale(0.99); }
 .btn-start:disabled { opacity:0.7; cursor:wait; }
-
 .steps {
     margin-top:24px; text-align:left;
-    background:linear-gradient(135deg,#f9fafb,#f3f4f6);
-    padding:18px; border-radius:18px;
-    font-size:13px; color:#374151;
-    line-height:1.8; border:1px solid #e5e7eb;
-}
-.steps-title {
-    font-weight:900; color:#667eea;
-    font-size:11px; text-transform:uppercase;
-    letter-spacing:1px; margin-bottom:12px;
-}
-.step-row { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
-.step-num {
-    width:22px; height:22px; border-radius:50%;
-    background:linear-gradient(135deg,#667eea,#764ba2);
-    color:white; font-weight:900; font-size:11px;
-    display:flex; align-items:center; justify-content:center;
-    flex-shrink:0;
+    background:#f9fafb; padding:18px; border-radius:18px;
+    font-size:13px; color:#374151; line-height:1.8;
 }
 </style>
 </head>
 <body>
-<div class="orb orb1"></div>
-<div class="orb orb2"></div>
-<div class="orb orb3"></div>
-
 <div class="card">
-
-    <div class="logo-wrap">
-        <div class="logo-halo"></div>
-        <div class="logo-ring"></div>
-        <div class="logo-icon">☎️</div>
-        <div class="logo-shine"></div>
-    </div>
-
-    <h1>Tạo mã QR Zalo</h1>
-    <p class="sub">Quét → Đồng ý trên điện thoại → Lấy Cookie</p>
-
-    <button id="btn-start" class="btn-start" onclick="startQR()">
-        🚀 TẠO MÃ QR
-    </button>
-
+    <h1>☎️ Tạo mã QR Zalo</h1>
+    <p class="sub">Quét QR để lấy IMEI + Cookie</p>
+    <button id="btn-start" class="btn-start" onclick="startQR()">🚀 TẠO MÃ QR</button>
     <div class="steps">
-        <div class="steps-title">Hướng dẫn</div>
-        <div class="step-row"><div class="step-num">1</div><div>Bấm "Tạo mã QR"</div></div>
-        <div class="step-row"><div class="step-num">2</div><div>Đợi 15-30s → hiện mã QR</div></div>
-        <div class="step-row"><div class="step-num">3</div><div>Mở app Zalo → QR → Quét</div></div>
-        <div class="step-row"><div class="step-num">4</div><div>Điện thoại hiện thông báo → Đồng ý</div></div>
-        <div class="step-row"><div class="step-num">5</div><div>Web tự hiện IMEI + Cookie</div></div>
+        <b>Hướng dẫn:</b><br>
+        1️⃣ Bấm nút trên<br>
+        2️⃣ Đợi 15-30s → hiện mã QR<br>
+        3️⃣ Mở app Zalo → QR → Quét<br>
+        4️⃣ Đồng ý trên điện thoại<br>
+        5️⃣ Web tự hiện IMEI + Cookie
     </div>
-
 </div>
-
 <script>
 async function startQR() {
     const btn = document.getElementById('btn-start');
@@ -780,7 +557,7 @@ async function startQR() {
         const r = await fetch('/api/qr/create', { method: 'POST' });
         const d = await r.json();
         if (d.ok) {
-            btn.innerHTML = '✅ XONG! ĐANG CHUYỂN TRANG...';
+            btn.innerHTML = '✅ XONG!';
             setTimeout(function() { window.location.href = d.qr_url; }, 300);
         } else {
             alert('Lỗi: ' + (d.error || 'Không rõ'));
@@ -799,143 +576,62 @@ async function startQR() {
 """
 
 
-# ============================================================
-# HTML — TRANG QR
-# ============================================================
 HTML_QR = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Quét QR — ALB Forge</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Quét QR — ALB</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 """ + SHARED_CSS + """
-
 .qr-container {
-    background:#ffffff;
-    padding:12px;
-    border-radius:18px;
-    margin:0 auto 14px;
-    max-width:210px;
-    width:100%;
-    box-shadow:0 12px 35px rgba(0,0,0,0.1), 0 0 0 1px rgba(0,0,0,0.05);
-    position:relative;
-}
-.qr-container::before {
-    content:'';
-    position:absolute; inset:-2px;
-    border-radius:18px;
-    background:linear-gradient(135deg,#f093fb,#f5576c);
-    z-index:-1;
-    opacity:0.5;
-    filter:blur(10px);
-    animation:qrGlow 3s ease-in-out infinite;
-}
-@keyframes qrGlow {
-    0%,100% { opacity:0.5; }
-    50% { opacity:0.8; }
+    background:#ffffff; padding:8px; border-radius:16px;
+    margin:0 auto 14px; max-width:340px; width:100%;
+    box-shadow:0 12px 35px rgba(0,0,0,0.15);
+    border:2px solid #e5e7eb;
+    overflow:hidden;
 }
 .qr-container img {
-    width:100%;
-    height:auto;
-    display:block;
-    border-radius:10px;
-    object-fit:contain;
+    width:100%; height:auto; display:block; border-radius:12px;
 }
-
 .qr-label {
-    text-align:center;
-    font-size:11px;
-    color:#6b7280;
-    font-weight:600;
-    margin-bottom:14px;
-    padding:0 8px;
-    line-height:1.5;
+    text-align:center; font-size:12px; color:#6b7280;
+    font-weight:600; margin-bottom:14px;
 }
-
 .status {
     padding:14px; border-radius:14px;
     font-size:13px; font-weight:800;
     display:flex; align-items:center; justify-content:center; gap:8px;
-    transition:all 0.4s;
 }
 .status.waiting {
     background:linear-gradient(135deg,#fef3c7,#fde68a);
     color:#92400e;
-    animation:waitingPulse 2s ease-in-out infinite;
-}
-@keyframes waitingPulse {
-    0%,100% { transform:scale(1); box-shadow:0 0 0 0 rgba(251,191,36,0.5); }
-    50% { transform:scale(1.01); box-shadow:0 0 0 10px rgba(251,191,36,0); }
 }
 .status.error { background:linear-gradient(135deg,#fee2e2,#fecaca); color:#991b1b; }
-.status.expired { background:linear-gradient(135deg,#f3f4f6,#e5e7eb); color:#374151; }
-
+.status.expired { background:#f3f4f6; color:#374151; }
 .confirm-btn {
-    width:100%;
-    margin-top:10px;
-    padding:14px;
+    width:100%; margin-top:10px; padding:14px;
     background:linear-gradient(135deg,#10b981,#059669);
     color:white; border:none; border-radius:14px;
-    font-size:13px; font-weight:900;
-    font-family:inherit; cursor:pointer;
+    font-size:13px; font-weight:900; font-family:inherit; cursor:pointer;
     box-shadow:0 10px 25px rgba(16,185,129,0.4);
-    transition:all 0.3s;
 }
-.confirm-btn:hover { transform:translateY(-2px); }
-.confirm-btn:disabled { opacity:0.7; cursor:wait; }
 .confirm-btn.refresh {
     background:linear-gradient(135deg,#f59e0b,#d97706);
-    box-shadow:0 10px 25px rgba(245,158,11,0.4);
 }
-
-.result-wrap {
-    text-align:left;
-    animation:resultIn 0.6s cubic-bezier(0.16,1,0.3,1);
-}
-@keyframes resultIn {
-    from { opacity:0; transform:translateY(20px); }
-    to { opacity:1; transform:translateY(0); }
-}
-
+.result-wrap { text-align:left; }
 .success-header {
     text-align:center; padding:18px;
     background:linear-gradient(135deg,#d1fae5,#a7f3d0);
     border-radius:18px; margin-bottom:16px;
-    position:relative; overflow:hidden;
 }
-.success-header::before {
-    content:'';
-    position:absolute; inset:0;
-    background:linear-gradient(120deg,transparent,rgba(255,255,255,0.6),transparent);
-    transform:translateX(-100%);
-    animation:shimmer 2.5s ease-in-out infinite;
-}
-@keyframes shimmer {
-    0% { transform:translateX(-100%); }
-    50%,100% { transform:translateX(100%); }
-}
-.success-icon {
-    font-size:46px; line-height:1;
-    margin-bottom:6px;
-    animation:successBounce 0.8s cubic-bezier(0.16,1,0.3,1);
-}
-@keyframes successBounce {
-    0% { transform:scale(0); }
-    60% { transform:scale(1.2); }
-    100% { transform:scale(1); }
-}
-.success-title {
-    font-size:16px; font-weight:900;
-    color:#065f46;
-}
-
+.success-icon { font-size:46px; margin-bottom:6px; }
+.success-title { font-size:16px; font-weight:900; color:#065f46; }
 .result {
     padding:14px; border-radius:14px;
     background:linear-gradient(135deg,#ecfdf5,#d1fae5);
-    margin-bottom:10px;
-    border:1px solid #a7f3d0;
+    margin-bottom:10px; border:1px solid #a7f3d0;
 }
 .result .label {
     font-size:10px; color:#065f46;
@@ -943,109 +639,55 @@ HTML_QR = """<!DOCTYPE html>
     letter-spacing:1px; margin-bottom:6px;
 }
 .result .value {
-    font-family:monospace;
-    font-size:11px; color:#065f46;
-    word-break:break-all; line-height:1.5;
-    font-weight:600;
+    font-family:monospace; font-size:11px; color:#065f46;
+    word-break:break-all; line-height:1.5; font-weight:600;
 }
 .result .value.scroll {
     max-height:150px; overflow-y:auto;
-    background:rgba(255,255,255,0.6);
-    padding:8px; border-radius:8px;
-    margin-top:6px;
+    background:rgba(255,255,255,0.6); padding:8px;
+    border-radius:8px; margin-top:6px;
 }
-.result .value.scroll::-webkit-scrollbar { width:4px; }
-.result .value.scroll::-webkit-scrollbar-thumb {
-    background:#a7f3d0; border-radius:2px;
-}
-
 .copy-btn {
-    width:100%; padding:14px; border:none;
-    border-radius:12px;
+    width:100%; padding:14px; border:none; border-radius:12px;
     background:linear-gradient(135deg,#667eea,#764ba2);
     color:white; font-size:13px; font-weight:900;
-    font-family:inherit; cursor:pointer;
-    margin-top:8px;
-    box-shadow:0 10px 25px rgba(102,126,234,0.4);
-    transition:all 0.3s;
+    font-family:inherit; cursor:pointer; margin-top:8px;
 }
-.copy-btn:hover { transform:translateY(-2px); }
 .copy-btn.green { background:linear-gradient(135deg,#10b981,#059669); }
 .copy-btn.purple { background:linear-gradient(135deg,#8b5cf6,#7c3aed); }
 .copy-btn.blue { background:linear-gradient(135deg,#3b82f6,#2563eb); }
-
-.hint {
-    margin-top:10px; font-size:11px;
-    color:#6b7280; text-align:center;
-    font-weight:600; line-height:1.5;
-}
-
+.hint { margin-top:10px; font-size:11px; color:#6b7280; text-align:center; }
 .toast {
-    position:fixed; bottom:24px; left:50%;
-    transform:translateX(-50%);
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
     background:linear-gradient(135deg,#10b981,#059669);
-    color:white; padding:12px 24px;
-    border-radius:50px; font-weight:900;
-    font-size:13px;
-    box-shadow:0 20px 50px rgba(16,185,129,0.6);
-    z-index:9999;
-    animation:toastIn 0.4s;
-}
-@keyframes toastIn {
-    from { opacity:0; transform:translateX(-50%) translateY(40px) scale(0.8); }
-    to { opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
-}
-.toast.out { animation:toastOut 0.3s ease forwards; }
-@keyframes toastOut {
-    to { opacity:0; transform:translateX(-50%) translateY(30px) scale(0.9); }
-}
-
-@media (max-width:640px) {
-    .qr-container { max-width:180px; padding:10px; }
-    .success-icon { font-size:40px; }
-    .success-title { font-size:14px; }
+    color:white; padding:12px 24px; border-radius:50px;
+    font-weight:900; font-size:13px; z-index:9999;
 }
 </style>
 </head>
 <body>
-<div class="orb orb1"></div>
-<div class="orb orb2"></div>
-<div class="orb orb3"></div>
-
 <div class="card">
-
-    <div class="logo-wrap">
-        <div class="logo-halo"></div>
-        <div class="logo-ring"></div>
-        <div class="logo-icon">☎️</div>
-        <div class="logo-shine"></div>
-    </div>
-
-    <h1>Quét QR Zalo PC</h1>
-    <p class="sub">Mở app Zalo → QR → Quét mã bên dưới</p>
+    <h1>☎️ Quét QR Zalo</h1>
+    <p class="sub">Mở app Zalo → QR → Quét</p>
 
     <div id="qr-area">
         <div class="qr-container">
             <img id="qr-img" src="/qr-image/{{ session_id }}" alt="QR">
         </div>
-        <div class="qr-label">
-            📱 Quét → Đồng ý trên điện thoại
-        </div>
+        <div class="qr-label">📱 Quét → Đồng ý trên điện thoại</div>
     </div>
 
     <div id="status" class="status waiting">
-        <span style="font-size:16px;">⏳</span>
-        <span>Đang chờ quét...</span>
+        <span>⏳</span> <span>Đang chờ quét...</span>
     </div>
 
     <button id="btn-refresh" class="confirm-btn refresh" onclick="refreshQR()">
-        🔄 LÀM MỚI QR (nếu hết hạn)
+        🔄 LÀM MỚI QR
     </button>
 
     <button id="btn-check" class="confirm-btn" onclick="forceCheck()">
-        ✅ TÔI ĐÃ BẤM ĐỒNG Ý - LẤY COOKIE
+        ✅ TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE
     </button>
-
 </div>
 
 <script>
@@ -1062,23 +704,22 @@ async function check() {
 
         if (d.qr_version && d.qr_version !== lastQrVersion) {
             lastQrVersion = d.qr_version;
-            const img = document.getElementById('qr-img');
-            img.src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
+            document.getElementById('qr-img').src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
         }
 
         if (d.status === 'waiting' || d.status === 'creating') {
             el.className = 'status waiting';
-            el.innerHTML = '<span style="font-size:16px;">⏳</span><span>Đang chờ quét...</span>';
+            el.innerHTML = '<span>⏳</span> <span>Đang chờ quét...</span>';
         } else if (d.status === 'done') {
             done = true;
             showResult(d);
         } else if (d.status === 'error') {
             el.className = 'status error';
-            el.innerHTML = '<span style="font-size:16px;">❌</span><span>' + (d.error || 'Lỗi') + '</span>';
+            el.innerHTML = '<span>❌</span> <span>' + (d.error || 'Lỗi') + '</span>';
             done = true;
         } else if (d.status === 'expired') {
             el.className = 'status expired';
-            el.innerHTML = '<span style="font-size:16px;">⏰</span><span>QR hết hạn. Tạo lại.</span>';
+            el.innerHTML = '<span>⏰</span> <span>QR hết hạn</span>';
             done = true;
         }
     } catch (e) {}
@@ -1092,8 +733,7 @@ async function refreshQR() {
         const r = await fetch('/api/qr/refresh/' + sessionId, { method: 'POST' });
         const d = await r.json();
         if (d.ok) {
-            const img = document.getElementById('qr-img');
-            img.src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
+            document.getElementById('qr-img').src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
             showToast('✅ Đã lấy QR mới!');
             lastQrVersion = d.qr_version;
         } else {
@@ -1103,7 +743,7 @@ async function refreshQR() {
         alert('Lỗi: ' + e.message);
     }
     btn.disabled = false;
-    btn.innerHTML = '🔄 LÀM MỚI QR (nếu hết hạn)';
+    btn.innerHTML = '🔄 LÀM MỚI QR';
 }
 
 async function forceCheck() {
@@ -1119,12 +759,12 @@ async function forceCheck() {
         } else {
             alert('Chưa có cookie. Đợi 5-10 giây rồi thử lại.\n' + (d.note || ''));
             btn.disabled = false;
-            btn.innerHTML = '✅ TÔI ĐÃ BẤM ĐỒNG Ý - LẤY COOKIE';
+            btn.innerHTML = '✅ TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE';
         }
     } catch (e) {
         alert('Lỗi: ' + e.message);
         btn.disabled = false;
-        btn.innerHTML = '✅ TÔI ĐÃ BẤM ĐỒNG Ý - LẤY COOKIE';
+        btn.innerHTML = '✅ TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE';
     }
 }
 
@@ -1157,13 +797,13 @@ function showResult(d) {
                 '<div class="value">' + escapeHtml(imei) + '</div>' +
             '</div>' +
             '<div class="result">' +
-                '<div class="label">🍪 COOKIE (JSON)</div>' +
+                '<div class="label">🍪 COOKIE</div>' +
                 '<div class="value scroll">' + escapeHtml(cookiesStr) + '</div>' +
             '</div>' +
             '<button class="copy-btn green" id="copy-all">📋 COPY CẢ IMEI + COOKIE</button>' +
             '<button class="copy-btn blue" id="copy-imei">📞 CHỈ COPY IMEI</button>' +
             '<button class="copy-btn purple" id="copy-ck">🍪 CHỈ COPY COOKIE</button>' +
-            '<div class="hint">Sau khi copy → quay lại web spam → paste vào tab Tài khoản</div>' +
+            '<div class="hint">Copy → paste vào web spam</div>' +
         '</div>';
 
     document.getElementById('copy-all').onclick = function() { copyText(combo); };
@@ -1188,12 +828,8 @@ function fallbackCopy(text) {
     ta.style.left = '-9999px';
     document.body.appendChild(ta);
     ta.select();
-    try {
-        document.execCommand('copy');
-        showToast('✅ Đã copy!');
-    } catch (e) {
-        prompt('Copy thủ công:', text);
-    }
+    try { document.execCommand('copy'); showToast('✅ Đã copy!'); }
+    catch (e) { prompt('Copy:', text); }
     document.body.removeChild(ta);
 }
 
@@ -1204,10 +840,7 @@ function showToast(msg) {
     t.className = 'toast';
     t.innerHTML = msg;
     document.body.appendChild(t);
-    setTimeout(function() {
-        t.classList.add('out');
-        setTimeout(function() { t.remove(); }, 300);
-    }, 2000);
+    setTimeout(function() { t.remove(); }, 2000);
 }
 
 setInterval(check, 2000);
@@ -1218,46 +851,31 @@ check();
 """
 
 
-# ============================================================
-# HTML — SESSION EXPIRED
-# ============================================================
 HTML_EXPIRED = """<!DOCTYPE html>
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Hết hạn — ALB Forge</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hết hạn</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
 """ + SHARED_CSS + """
-
-.expired-icon { font-size:64px; margin-bottom:18px; animation:iconWobble 2s ease-in-out infinite; }
-@keyframes iconWobble {
-    0%,100% { transform:rotate(0deg); }
-    25% { transform:rotate(-8deg); }
-    75% { transform:rotate(8deg); }
-}
+.expired-icon { font-size:64px; margin-bottom:18px; }
 .expired-title { color:#1a1a2e; margin-bottom:12px; font-size:22px; font-weight:900; }
-.expired-text { color:#6b7280; font-size:13px; margin-bottom:22px; line-height:1.7; }
+.expired-text { color:#6b7280; font-size:13px; margin-bottom:22px; }
 .expired-btn {
     display:inline-block; padding:14px 28px;
     background:linear-gradient(135deg,#667eea,#764ba2);
-    color:white; border-radius:14px;
-    text-decoration:none; font-weight:900; font-size:13px;
-    box-shadow:0 15px 40px rgba(102,126,234,0.5);
-    transition:all 0.3s;
+    color:white; border-radius:14px; text-decoration:none;
+    font-weight:900; font-size:13px;
 }
-.expired-btn:hover { transform:translateY(-3px); }
 </style>
 </head>
 <body>
-<div class="orb orb1"></div>
-<div class="orb orb2"></div>
-
 <div class="card">
     <div class="expired-icon">⏰</div>
     <div class="expired-title">Session hết hạn</div>
-    <div class="expired-text">Vui lòng tạo mã QR mới.</div>
+    <div class="expired-text">Tạo mã QR mới</div>
     <a href="/" class="expired-btn">🔄 Tạo QR mới</a>
 </div>
 </body>
@@ -1265,9 +883,6 @@ HTML_EXPIRED = """<!DOCTYPE html>
 """
 
 
-# ============================================================
-# MAIN
-# ============================================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
