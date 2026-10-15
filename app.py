@@ -47,7 +47,7 @@ app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR LOGIN — iPhone 18 spoof
+# ZALO QR LOGIN — iPhone 18 UA — Render-ready
 # ============================================================
 class ZaloQR:
     def __init__(self):
@@ -61,8 +61,11 @@ class ZaloQR:
             headless=True,
             args=[
                 "--no-sandbox",
+                "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
+                "--single-process",
+                "--no-zygote",
                 "--disable-blink-features=AutomationControlled",
                 "--window-size=600,900",
             ],
@@ -95,7 +98,6 @@ class ZaloQR:
             )
             page = await ctx.new_page()
 
-            # Chèn script chống phát hiện automation
             await page.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
                 Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
@@ -468,11 +470,11 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "version": "28.0", "ua": "iPhone-18"})
+    return jsonify({"status": "ok", "version": "28.1", "ua": "iPhone-18"})
 
 
 # ============================================================
-# LIQUID GLASS UI v28 — XANH NGỌC BÍCH
+# LIQUID GLASS UI v28.1 — XANH NGỌC BÍCH
 # ============================================================
 SHARED_CSS = """
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -600,7 +602,7 @@ HTML_HOME = """<!DOCTYPE html>
 <body>
 <div class="card">
     <h1>☎️ TẠO MÃ QR ZALO</h1>
-    <p class="sub">✨ Liquid Glass v28 — iPhone 18 UA — Quét QR lấy IMEI + Cookie</p>
+    <p class="sub">✨ Liquid Glass v28.1 — iPhone 18 UA — Quét QR lấy IMEI + Cookie</p>
     <button id="btn-start" class="btn-start" onclick="startQR()">🚀 TẠO MÃ QR</button>
     <div class="steps">
         <b>HƯỚNG DẪN:</b><br>
@@ -800,7 +802,7 @@ HTML_QR = """<!DOCTYPE html>
 <body>
 <div class="card">
     <h1>☎️ QUÉT QR ZALO</h1>
-    <p class="sub">✨ Liquid Glass v28 — iPhone 18 — Mở app Zalo → QR → Quét</p>
+    <p class="sub">✨ Liquid Glass v28.1 — iPhone 18 — Mở app Zalo → QR → Quét</p>
 
     <div id="qr-area">
         <div class="qr-container">
