@@ -64,7 +64,7 @@ app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR CORE — DESKTOP VIEW TO RENDER QR + IPHONE 18 SESSION
+# ZALO QR CORE — FIX BLANK SCREEN & CAPTURE QR ENGINE
 # ============================================================
 class ZaloQR:
     def __init__(self):
@@ -102,19 +102,24 @@ class ZaloQR:
 
     async def _capture_qr(self, page):
         try:
-            # Chờ phần tử QR xuất hiện trên màn hình desktop Zalo
-            for selector in [".qrcode-img", "#app .qrcode", "canvas", ".qr-wrapper", "img[alt*='QR']"]:
+            # Thử đợi và tìm đúng vùng chứa mã QR (canvas hoặc thẻ chứa ảnh QR)
+            for selector in ["canvas", ".qrcode-img", "img[alt*='QR']", ".qr-wrapper", "#app"]:
                 try:
-                    el = await page.wait_for_selector(selector, timeout=5000)
+                    el = await page.wait_for_selector(selector, timeout=4000)
                     if el:
                         box = await el.bounding_box()
-                        if box and box["width"] > 40 and box["height"] > 40:
+                        if box and box["width"] > 30 and box["height"] > 30:
+                            print(f"[QR] Đã tìm thấy phần tử QR qua selector: {selector}")
                             return await el.screenshot()
                 except Exception:
                     continue
 
-            # Fallback chụp toàn trang nếu không tìm thấy selector cụ thể
-            return await page.screenshot(full_page=False)
+            # Nếu không tìm thấy thẻ riêng lẻ, chụp khung hình chính giữa màn hình nơi chứa QR
+            print("[QR] Chụp fallback khung màn hình trung tâm...")
+            return await page.screenshot(
+                full_page=False,
+                clip={"x": 350, "y": 150, "width": 580, "height": 500}
+            )
         except Exception as e:
             print("[QR] Lỗi chụp QR: " + str(e))
             return None
@@ -122,8 +127,6 @@ class ZaloQR:
     async def create_qr(self, session_id):
         try:
             await self.start()
-            # Sử dụng màn hình Desktop để render mã QR chuẩn xác 100% không bị lỗi giao diện
-            # Nhưng User-Agent vẫn là iPhone 18 để khi quét xong nhận diện thiết bị đăng nhập là iPhone 18
             ctx = await self.browser.new_context(
                 viewport={"width": 1280, "height": 800},
                 device_scale_factor=2,
@@ -155,8 +158,9 @@ class ZaloQR:
                 if "ERR_ABORTED" not in str(e):
                     raise e
 
-            # Chờ mã QR load hoàn tất
-            await asyncio.sleep(5)
+            # Cho thời gian để JavaScript của Zalo Web render hoàn tất mã QR lên màn hình
+            print("[QR] Đang đợi render mã QR...")
+            await asyncio.sleep(7)
 
             png = await self._capture_qr(page)
             if not png:
@@ -172,10 +176,10 @@ class ZaloQR:
                 "png_path": png_path,
                 "cookies": None,
                 "imei": None,
-                "qr_version": int(time.time()),
+                "qr_version": int(time.time(),
             })
 
-            print("[QR] Đã tạo thành công phiên: " + session_id)
+            print("[QR] Đã khởi tạo thành công phiên: " + session_id)
 
             ACTIVE_PAGES[session_id] = {
                 "page": page,
@@ -391,15 +395,18 @@ def api_qr_refresh(session_id):
     try:
         async def _refresh():
             page = info["page"]
-            await asyncio.sleep(1)
-            for selector in [".qrcode-img", "#app .qrcode", "canvas", "img[alt*='QR']"]:
+            await asyncio.sleep(1.5)
+            for selector in ["canvas", ".qrcode-img", "img[alt*='QR']", ".qr-wrapper"]:
                 try:
                     el = await page.query_selector(selector)
                     if el:
                         return await el.screenshot()
                 except Exception:
                     continue
-            return await page.screenshot(full_page=False)
+            return await page.screenshot(
+                full_page=False,
+                clip={"x": 350, "y": 150, "width": 580, "height": 500}
+            )
 
         result = {}
 
@@ -462,7 +469,7 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "version": "30.0", "device": "iphone-18-ua"})
+    return jsonify({"status": "ok", "version": "30.1", "device": "iphone-18-ua"})
 
 
 # ============================================================
