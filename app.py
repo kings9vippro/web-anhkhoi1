@@ -9,6 +9,7 @@ import random
 import string
 import subprocess
 import sys
+import shutil
 
 from flask import Flask, request, jsonify, render_template_string, Response
 
@@ -64,7 +65,7 @@ app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR CORE — FIX SYNTAX ERROR & RENDER STABLE QR
+# ZALO QR CORE — FIX ETXTBSY & RENDER STABLE QR
 # ============================================================
 class ZaloQR:
     def __init__(self):
@@ -88,17 +89,26 @@ class ZaloQR:
         from playwright.async_api import async_playwright
         self.playwright = await async_playwright().start()
 
-        try:
-            self.browser = await self._launch_browser()
-        except Exception as e:
-            err_str = str(e).lower()
-            if "executable doesn't exist" in err_str or "playwright install" in err_str:
-                print("[QR] Đang tải tự động Chromium...")
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, ensure_playwright_browsers)
+        # Thử khởi chạy tối đa 3 lần nếu gặp lỗi ETXTBSY
+        for attempt in range(3):
+            try:
                 self.browser = await self._launch_browser()
-            else:
-                raise e
+                return
+            except Exception as e:
+                err_str = str(e).lower()
+                if "etxtbsy" in err_str:
+                    print(f"[QR] Gặp lỗi ETXTBSY (lần {attempt+1}), đang đợi thử lại...")
+                    await asyncio.sleep(2)
+                    continue
+                elif "executable doesn't exist" in err_str or "playwright install" in err_str:
+                    print("[QR] Đang tải tự động Chromium...")
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, ensure_playwright_browsers)
+                    self.browser = await self._launch_browser()
+                    return
+                else:
+                    raise e
+        raise Exception("Không thể khởi chạy trình duyệt do lỗi ETXTBSY liên tục.")
 
     async def _capture_qr(self, page):
         try:
@@ -464,7 +474,7 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "version": "30.2", "device": "iphone-18-ua"})
+    return jsonify({"status": "ok", "version": "30.3", "device": "iphone-18-ua"})
 
 
 # ============================================================
