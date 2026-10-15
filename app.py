@@ -3,7 +3,7 @@ import io
 import json
 import time
 import uuid
-import asyncio
+import queue
 import threading
 import random
 import string
@@ -16,9 +16,12 @@ QR_TTL = 600
 DATA_DIR = "/tmp/qr_sessions"
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# Quản lý luồng trình duyệt độc lập, chống crash bộ nhớ
+ACTIVE_WORKERS = {}
+
 
 def ensure_playwright_browsers():
-    """Tự động kiểm tra và tải trình duyệt Chromium nếu môi trường chưa có."""
+    """Tự động kiểm tra và tải trình duyệt Chromium nếu môi trường Render chưa có."""
     try:
         subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
@@ -27,7 +30,7 @@ def ensure_playwright_browsers():
             stderr=subprocess.DEVNULL,
         )
     except Exception as e:
-        print("[SETUP] Lỗi khi chạy playwright install: " + str(e))
+        print("[SETUP] playwright install note: " + str(e))
 
 
 threading.Thread(target=ensure_playwright_browsers, daemon=True).start()
@@ -65,117 +68,86 @@ app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR CORE ENGINE — FIX ERR_ABORTED & RENDER COMPATIBILITY
+# WORKER TRÌNH DUYỆT ĐỘC LẬP (ĐỒNG BỘ - CHỐNG OOM & CRASH)
 # ============================================================
-class ZaloQR:
-    def __init__(self):
-        self.browser = None
-        self.playwright = None
+def run_zalo_worker(session_id, cmd_q):
+    from playwright.sync_api import sync_playwright
 
-    async def _launch_browser(self):
-        # Đã loại bỏ --single-process và --no-zygote để tránh sập Chromium trên Linux
-        return await self.playwright.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-blink-features=AutomationControlled",
-                "--window-size=600,900",
-            ],
-        )
+    png_path = os.path.join(DATA_DIR, f"{session_id}.png")
 
-    async def start(self):
-        from playwright.async_api import async_playwright
-        self.playwright = await async_playwright().start()
+    try:
+        with sync_playwright() as p:
+            # Tối ưu cờ khởi chạy tiết kiệm RAM tối đa cho Render Free (512MB)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--renderer-process-limit=1",
+                    "--js-flags=--max-old-space-size=128",
+                    "--window-size=1280,800",
+                ],
+            )
 
-        try:
-            self.browser = await self._launch_browser()
-        except Exception as e:
-            err_str = str(e).lower()
-            if "executable doesn't exist" in err_str or "playwright install" in err_str:
-                print("[QR] Đang kích hoạt tải Chromium khẩn cấp...")
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, ensure_playwright_browsers)
-                self.browser = await self._launch_browser()
-            else:
-                raise e
-
-    async def _capture_qr(self, page):
-        try:
-            # Ưu tiên tìm vùng chứa mã QR thật để chụp rõ nét nhất
-            for selector in [".qrcode-img", "#app .qrcode", "canvas", "img[alt*='QR']", ".login-box"]:
-                el = await page.query_selector(selector)
-                if el:
-                    box = await el.bounding_box()
-                    if box and box["width"] > 80 and box["height"] > 80:
-                        return await el.screenshot()
-
-            return await page.screenshot(full_page=False)
-        except Exception as e:
-            print("[QR] Lỗi chụp màn hình: " + str(e))
-            return None
-
-    async def create_qr(self, session_id):
-        try:
-            await self.start()
-            ctx = await self.browser.new_context(
-                viewport={"width": 393, "height": 852},
-                device_scale_factor=2,
-                is_mobile=True,
-                has_touch=True,
+            # BẮT BUỘC DÙNG DESKTOP USER-AGENT ĐỂ ZALO HIỆN MÃ QR
+            context = browser.new_context(
+                viewport={"width": 1280, "height": 800},
                 user_agent=(
-                    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) "
-                    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-                    "Version/18.0 Mobile/15E148 Safari/604.1"
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/126.0.0.0 Safari/537.36"
                 ),
                 locale="vi-VN",
                 timezone_id="Asia/Ho_Chi_Minh",
             )
-            page = await ctx.new_page()
+            page = context.new_page()
 
-            await page.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
-                Object.defineProperty(navigator, 'vendor', { get: () => 'Apple Computer, Inc.' });
-                window.chrome = { runtime: {} };
-            """)
-
-            print("[QR] Đang truy cập chat.zalo.me...")
-            # Sửa wait_until sang domcontentloaded và bọc lỗi ERR_ABORTED do chuyển trang
-            try:
-                await page.goto(
-                    "https://chat.zalo.me/",
-                    wait_until="domcontentloaded",
-                    timeout=45000,
-                )
-            except Exception as e:
-                if "ERR_ABORTED" in str(e):
-                    print("[QR] Bỏ qua chuyển hướng ERR_ABORTED")
+            # Chặn tải các tài nguyên nặng (video, font không cần thiết)
+            def intercept_route(route):
+                if route.request.resource_type in ["media", "font"]:
+                    route.abort()
                 else:
-                    raise e
+                    route.continue_()
 
-            await asyncio.sleep(4)
+            page.route("**/*", intercept_route)
 
-            # Tìm và kích hoạt tab Quét mã QR nếu chưa hiển thị
+            print(f"[WORKER-{session_id}] Mở chat.zalo.me...")
             try:
-                btn = await page.wait_for_selector("text=/QR|Quét mã/i", timeout=8000)
-                if btn:
-                    await btn.click()
-                    print("[QR] Đã chọn tab QR")
+                page.goto("https://chat.zalo.me/", timeout=35000, wait_until="domcontentloaded")
+            except Exception as e:
+                print(f"[WORKER-{session_id}] Điều hướng note: {e}")
+
+            time.sleep(3)
+
+            # Tự động chọn tab "VỚI MÃ QR" nếu Zalo hiển thị tab chọn
+            try:
+                qr_tab = page.query_selector("text=/VỚI MÃ QR|QR/i")
+                if qr_tab:
+                    qr_tab.click()
+                    time.sleep(1)
             except Exception:
                 pass
 
-            await asyncio.sleep(4)
+            # Hàm chụp riêng vùng chứa mã QR rõ nét
+            def capture_qr_image():
+                for sel in [".qrcode", ".qrcode-img", "div[class*='qrcode']", ".login-box", "canvas"]:
+                    el = page.query_selector(sel)
+                    if el:
+                        try:
+                            box = el.bounding_box()
+                            if box and box["width"] > 60 and box["height"] > 60:
+                                el.screenshot(path=png_path)
+                                return True
+                        except Exception:
+                            pass
+                page.screenshot(path=png_path)
+                return True
 
-            png = await self._capture_qr(page)
-            if not png:
-                raise Exception("Không thể xuất ảnh mã QR")
-
-            png_path = os.path.join(DATA_DIR, session_id + ".png")
-            with open(png_path, "wb") as f:
-                f.write(png)
+            capture_qr_image()
+            print(f"[WORKER-{session_id}] Đã xuất ảnh QR thành công")
 
             sess_save(session_id, {
                 "status": "waiting",
@@ -186,100 +158,78 @@ class ZaloQR:
                 "qr_version": int(time.time()),
             })
 
-            print("[QR] Phiên " + session_id + " đã sẵn sàng")
-
-            ACTIVE_PAGES[session_id] = {
-                "page": page,
-                "browser": self.browser,
-                "playwright": self.playwright,
-            }
-
-            threading.Thread(
-                target=lambda: asyncio.run(self._poll(page, session_id)),
-                daemon=True,
-            ).start()
-
-        except Exception as e:
-            print("[QR] Lỗi khởi tạo QR: " + str(e))
-            sess_save(session_id, {
-                "status": "error",
-                "error": str(e),
-                "created_at": time.time(),
-            })
-
-    async def _poll(self, page, session_id):
-        start = time.time()
-        while time.time() - start < QR_TTL:
-            try:
-                cookies = await page.context.cookies()
-                ck_dict = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
-
-                if ck_dict.get("zpw_sek"):
-                    print("[QR] Đã xác thực thành công qua ZPW_SEK")
-                    await asyncio.sleep(2)
-                    return await self._extract(session_id, page)
-
-                url = page.url
-                if ("chat.zalo.me" in url and "/login" not in url and "qr" not in url.lower()):
-                    await asyncio.sleep(2)
-                    return await self._extract(session_id, page)
-
-            except Exception:
-                pass
-
-            await asyncio.sleep(1.5)
-
-        data = sess_load(session_id) or {}
-        data["status"] = "expired"
-        sess_save(session_id, data)
-        await self._cleanup(session_id)
-
-    async def _extract(self, session_id, page):
-        try:
-            await asyncio.sleep(4)
-            cookies = await page.context.cookies()
-            ck = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
-
-            imei = ""
-            for k in ["imei", "zpw_imei", "device_id", "deviceId"]:
+            start_time = time.time()
+            while time.time() - start_time < QR_TTL:
+                # Kiểm tra hàng đợi lệnh từ người dùng (Làm mới QR)
                 try:
-                    v = await page.evaluate(f"localStorage.getItem('{k}')")
-                    if v:
-                        imei = v
+                    cmd = cmd_q.get_nowait()
+                    if cmd == "refresh":
+                        print(f"[WORKER-{session_id}] Thực hiện làm mới mã QR...")
+                        try:
+                            reload_btn = page.query_selector("text=/Lấy mã mới|Quét mã|Tải lại/i")
+                            if reload_btn:
+                                reload_btn.click()
+                                time.sleep(1.5)
+                        except Exception:
+                            pass
+                        capture_qr_image()
+                        data = sess_load(session_id) or {}
+                        data["qr_version"] = int(time.time())
+                        sess_save(session_id, data)
+                    elif cmd == "stop":
                         break
-                except Exception:
+                except queue.Empty:
                     pass
 
-            if not imei and ck.get("zpw_imei"):
-                imei = ck["zpw_imei"]
-            if not imei:
-                imei = gen_imei()
+                # Kiểm tra kết quả quét mã thành công
+                try:
+                    cookies = context.cookies()
+                    ck = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
 
-            data = sess_load(session_id) or {}
-            data["status"] = "done"
-            data["cookies"] = ck
-            data["imei"] = imei
-            sess_save(session_id, data)
-            await self._cleanup(session_id)
-        except Exception as e:
-            data = sess_load(session_id) or {}
-            data["status"] = "error"
-            data["error"] = str(e)
-            sess_save(session_id, data)
+                    # Nếu xuất hiện zpw_sek hoặc URL chuyển vào hòm thư
+                    if ck.get("zpw_sek") or ("chat.zalo.me" in page.url and "/login" not in page.url and "account" not in page.url):
+                        print(f"[WORKER-{session_id}] Xác thực Zalo thành công!")
+                        time.sleep(3)
 
-    async def _cleanup(self, session_id):
-        info = ACTIVE_PAGES.pop(session_id, None)
-        if info:
-            try:
-                if info.get("browser"):
-                    await info["browser"].close()
-                if info.get("playwright"):
-                    await info["playwright"].stop()
-            except Exception:
-                pass
+                        cookies = context.cookies()
+                        ck = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
 
+                        imei = ""
+                        for k in ["imei", "zpw_imei", "device_id", "deviceId"]:
+                            try:
+                                v = page.evaluate(f"localStorage.getItem('{k}')")
+                                if v:
+                                    imei = v
+                                    break
+                            except Exception:
+                                pass
 
-ACTIVE_PAGES = {}
+                        if not imei and ck.get("zpw_imei"):
+                            imei = ck["zpw_imei"]
+                        if not imei:
+                            imei = gen_imei()
+
+                        data = sess_load(session_id) or {}
+                        data["status"] = "done"
+                        data["cookies"] = ck
+                        data["imei"] = imei
+                        sess_save(session_id, data)
+                        break
+                except Exception as e:
+                    print(f"[WORKER-{session_id}] Lỗi kiểm tra cookie: {e}")
+
+                time.sleep(1.5)
+
+            browser.close()
+    except Exception as e:
+        print(f"[WORKER-{session_id}] Lỗi ngoại lệ: {e}")
+        sess_save(session_id, {
+            "status": "error",
+            "error": str(e),
+            "created_at": time.time(),
+        })
+    finally:
+        ACTIVE_WORKERS.pop(session_id, None)
 
 
 # ============================================================
@@ -298,16 +248,21 @@ def api_qr_create():
         "qr_version": 0,
     })
 
-    def run():
-        qr = ZaloQR()
-        asyncio.run(qr.create_qr(session_id))
+    cmd_q = queue.Queue()
+    ACTIVE_WORKERS[session_id] = cmd_q
 
-    threading.Thread(target=run, daemon=True).start()
+    worker_thread = threading.Thread(
+        target=run_zalo_worker,
+        args=(session_id, cmd_q),
+        daemon=True,
+    )
+    worker_thread.start()
 
+    # Chờ tối đa 15s để tạo ảnh QR ban đầu
     start = time.time()
-    while time.time() - start < 60:
+    while time.time() - start < 15:
         data = sess_load(session_id)
-        if data and data["status"] in ("waiting", "error"):
+        if data and data.get("status") in ("waiting", "error"):
             break
         time.sleep(0.5)
 
@@ -333,6 +288,19 @@ def api_qr_status(session_id):
     })
 
 
+@app.route("/api/qr/refresh/<session_id>", methods=["POST"])
+def api_qr_refresh(session_id):
+    cmd_q = ACTIVE_WORKERS.get(session_id)
+    if not cmd_q:
+        return jsonify({"error": "Phiên duyệt web đã đóng hoặc hết hạn"}), 404
+
+    cmd_q.put("refresh")
+    time.sleep(2)
+
+    data = sess_load(session_id) or {}
+    return jsonify({"ok": True, "qr_version": data.get("qr_version", int(time.time()))})
+
+
 @app.route("/api/qr/force-extract/<session_id>", methods=["POST"])
 def api_qr_force_extract(session_id):
     data = sess_load(session_id)
@@ -346,99 +314,10 @@ def api_qr_force_extract(session_id):
             "cookies": data.get("cookies"),
         })
 
-    info = ACTIVE_PAGES.get(session_id)
-    if not info:
-        return jsonify({
-            "status": data.get("status", "waiting"),
-            "imei": data.get("imei"),
-            "cookies": data.get("cookies"),
-            "note": "Phiên đã đóng",
-        })
-
-    try:
-        async def _read():
-            page = info["page"]
-            cookies = await page.context.cookies()
-            ck = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
-            imei = ""
-            for k in ["imei", "zpw_imei", "device_id", "deviceId"]:
-                try:
-                    v = await page.evaluate(f"localStorage.getItem('{k}')")
-                    if v:
-                        imei = v
-                        break
-                except Exception:
-                    pass
-            return ck, imei
-
-        result = {}
-
-        def run():
-            result["data"] = asyncio.run(_read())
-
-        t = threading.Thread(target=run)
-        t.start()
-        t.join(timeout=10)
-
-        if "data" not in result:
-            return jsonify({"status": "waiting", "note": "Hết thời gian chờ"})
-
-        ck, imei = result["data"]
-        if ck.get("zpw_sek"):
-            if not imei:
-                imei = gen_imei()
-            data["status"] = "done"
-            data["cookies"] = ck
-            data["imei"] = imei
-            sess_save(session_id, data)
-            return jsonify({"status": "done", "imei": imei, "cookies": ck})
-
-        return jsonify({"status": "waiting", "note": "Chưa phát hiện token", "cookies_count": len(ck)})
-
-    except Exception as e:
-        return jsonify({"status": "waiting", "error": str(e)})
-
-
-@app.route("/api/qr/refresh/<session_id>", methods=["POST"])
-def api_qr_refresh(session_id):
-    info = ACTIVE_PAGES.get(session_id)
-    if not info:
-        return jsonify({"error": "Phiên đã hoàn tất hoặc đóng"}), 404
-
-    try:
-        async def _refresh():
-            page = info["page"]
-            await asyncio.sleep(1)
-            for selector in [".qrcode-img", "#app .qrcode", "canvas", "img[alt*='QR']"]:
-                el = await page.query_selector(selector)
-                if el:
-                    return await el.screenshot()
-            return await page.screenshot(full_page=False)
-
-        result = {}
-
-        def run():
-            result["png"] = asyncio.run(_refresh())
-
-        t = threading.Thread(target=run)
-        t.start()
-        t.join(timeout=15)
-
-        if "png" not in result or not result["png"]:
-            return jsonify({"error": "Không thể chụp lại QR"}), 500
-
-        png_path = os.path.join(DATA_DIR, session_id + ".png")
-        with open(png_path, "wb") as f:
-            f.write(result["png"])
-
-        data = sess_load(session_id) or {}
-        data["qr_version"] = int(time.time())
-        sess_save(session_id, data)
-
-        return jsonify({"ok": True, "qr_version": data["qr_version"]})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "status": "waiting",
+        "note": "Vui lòng xác nhận đăng nhập trên Zalo điện thoại trước",
+    })
 
 
 @app.route("/qr-image/<session_id>")
@@ -458,7 +337,7 @@ def qr_image(session_id):
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
             "Expires": "0",
-        }
+        },
     )
 
 
@@ -474,104 +353,99 @@ def page_qr(session_id):
     return render_template_string(HTML_QR, session_id=session_id)
 
 
-@app.route("/health")
-def health():
-    return jsonify({"status": "ok", "version": "29.0", "theme": "pure-snow-white"})
-
-
 # ============================================================
-# PURE SNOW-WHITE MINIMALIST ARCHITECTURE (B&W GLASS)
+# THIẾT KẾ TRẮNG TUYẾT & ĐEN OBSIDIAN (SNOW-WHITE LUXURY)
 # ============================================================
 SHARED_CSS = """
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html { -webkit-text-size-adjust:100%; touch-action:manipulation; }
 body {
-    font-family:-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family:-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
     min-height:100vh; min-height:100dvh;
     display:flex; align-items:center; justify-content:center;
-    background:#0a0a0c;
+    background:#f4f5f7;
     background-image:
-        radial-gradient(at 0% 0%, #1e1e24 0, transparent 50%),
-        radial-gradient(at 100% 100%, #17171c 0, transparent 50%),
-        radial-gradient(circle at 50% 50%, #141418 0%, #09090b 100%);
+        radial-gradient(circle at 50% 0%, #ffffff 0%, #edf0f4 100%);
     padding:20px;
-    color:#09090b;
+    color:#0f172a;
 }
 
-/* KHUNG CARD CHÍNH - MÀU TRẮNG TUYẾT CAO CẤP */
+/* KHUNG CARD CHÍNH - TRẮNG TUYẾT HOÀN HẢO */
 .card {
     position:relative;
     background:#ffffff;
-    padding:44px 30px 40px;
+    padding:44px 28px 40px;
     border-radius:36px;
+    border:1px solid rgba(0, 0, 0, 0.08);
     box-shadow:
-        0 30px 80px rgba(0, 0, 0, 0.45),
-        0 1px 3px rgba(0, 0, 0, 0.1),
-        inset 0 1px 1px #ffffff;
-    text-align:center; max-width:480px; width:100%;
-    animation:cardIn 0.5s cubic-bezier(0.16,1,0.3,1);
+        0 20px 60px -15px rgba(15, 23, 42, 0.08),
+        0 0 1px 1px rgba(0, 0, 0, 0.02);
+    text-align:center; max-width:460px; width:100%;
+    animation:cardIn 0.45s cubic-bezier(0.16,1,0.3,1);
 }
 @keyframes cardIn {
-    from { opacity:0; transform:translateY(24px) scale(0.97); }
+    from { opacity:0; transform:translateY(20px) scale(0.98); }
     to { opacity:1; transform:translateY(0) scale(1); }
 }
 
-/* BIỂU TƯỢNG ĐẦU TRANG */
-.brand-icon {
+.brand-badge {
     display:inline-flex; align-items:center; justify-content:center;
-    width:64px; height:64px; border-radius:24px;
-    background:#f4f4f5;
-    border:1px solid #e4e4e7;
+    width:62px; height:62px; border-radius:22px;
+    background:#fafafa;
+    border:1.5px solid #e5e7eb;
     margin-bottom:18px;
-    box-shadow:0 4px 16px rgba(0,0,0,0.04);
+    box-shadow:0 4px 14px rgba(0,0,0,0.03);
 }
-.brand-icon svg { width:32px; height:32px; stroke:#09090b; fill:none; stroke-width:2; }
+.brand-badge svg { width:30px; height:30px; stroke:#0f172a; fill:none; stroke-width:2; }
 
 h1 {
-    color:#09090b;
+    color:#0f172a;
     margin-bottom:8px;
     font-size:22px; font-weight:800;
-    letter-spacing:-0.5px;
+    letter-spacing:-0.4px;
 }
 p.sub {
-    color:#71717a;
-    margin-bottom:30px; font-size:13px; font-weight:500;
+    color:#64748b;
+    margin-bottom:28px; font-size:13px; font-weight:500;
     line-height:1.5;
 }
 
-/* NÚT BẤM VIÊN THUỐC TRẮNG TUYẾT (PILL-SHAPED SNOW BUTTONS) */
+/* NÚT BẤM VIÊN THUỐC TRẮNG TUYẾT (SNOW PILL BUTTONS) */
 .btn-pill {
     position:relative;
     width:100%; padding:17px 24px; border-radius:9999px;
-    background:#ffffff;
-    color:#09090b; font-size:14px; font-weight:700;
+    background:linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+    color:#0f172a; font-size:14px; font-weight:700;
     font-family:inherit; cursor:pointer; letter-spacing:0.3px;
-    border:1.5px solid #e4e4e7;
+    border:1.5px solid #e2e8f0;
     box-shadow:
-        0 6px 20px rgba(0, 0, 0, 0.06),
+        0 4px 14px rgba(0, 0, 0, 0.04),
         inset 0 1px 1px #ffffff;
     display:inline-flex; align-items:center; justify-content:center; gap:10px;
     text-decoration:none;
     transition:all 0.25s cubic-bezier(0.16,1,0.3,1);
 }
 .btn-pill:hover {
-    background:#fcfcfc;
-    border-color:#18181b;
+    background:#ffffff;
+    border-color:#0f172a;
     transform:translateY(-2px);
-    box-shadow:0 12px 28px rgba(0, 0, 0, 0.1);
+    box-shadow:0 8px 24px rgba(15, 23, 42, 0.08);
 }
-.btn-pill:active {
-    transform:translateY(0);
-    box-shadow:0 4px 12px rgba(0, 0, 0, 0.05);
-}
+.btn-pill:active { transform:translateY(0); }
 .btn-pill:disabled { opacity:0.6; cursor:wait; }
-.btn-pill svg { width:18px; height:18px; stroke:#09090b; stroke-width:2.2; fill:none; }
+.btn-pill svg { width:18px; height:18px; stroke:#0f172a; stroke-width:2.2; fill:none; }
 
 .btn-secondary {
     margin-top:12px;
-    background:#f8fafc;
+    background:#ffffff;
     border-color:#e2e8f0;
 }
+
+@keyframes spin {
+    0% { transform:rotate(0deg); }
+    100% { transform:rotate(360deg); }
+}
+.spin { animation:spin 1s linear infinite; }
 """
 
 
@@ -580,38 +454,38 @@ HTML_HOME = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Đăng Nhập Zalo — Pure Minimalist</title>
+<title>Đăng Nhập Zalo — Snow White</title>
 <style>
 """ + SHARED_CSS + """
 .guide-box {
     margin-top:28px; text-align:left;
     background:#fafafa;
-    border:1px solid #f4f4f5;
+    border:1px solid #f1f5f9;
     padding:22px; border-radius:24px;
 }
 .guide-title {
     display:flex; align-items:center; gap:8px;
-    color:#09090b; font-size:11px; font-weight:800;
+    color:#0f172a; font-size:11px; font-weight:800;
     letter-spacing:1px; margin-bottom:14px; text-transform:uppercase;
 }
-.guide-title svg { width:15px; height:15px; stroke:#09090b; fill:none; stroke-width:2.5; }
+.guide-title svg { width:15px; height:15px; stroke:#0f172a; fill:none; stroke-width:2.5; }
 .guide-item {
     display:flex; align-items:center; gap:12px;
-    color:#52525b; font-size:13px; font-weight:500;
+    color:#475569; font-size:13px; font-weight:500;
     margin-bottom:11px; line-height:1.4;
 }
 .guide-badge {
     flex-shrink:0; width:22px; height:22px; border-radius:50%;
-    background:#ffffff; color:#09090b; font-size:11px; font-weight:800;
+    background:#ffffff; color:#0f172a; font-size:11px; font-weight:800;
     display:inline-flex; align-items:center; justify-content:center;
-    border:1px solid #e4e4e7;
+    border:1px solid #e2e8f0;
     box-shadow:0 2px 4px rgba(0,0,0,0.03);
 }
 </style>
 </head>
 <body>
 <div class="card">
-    <div class="brand-icon">
+    <div class="brand-badge">
         <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="7" height="7" rx="2"></rect>
             <rect x="14" y="3" width="7" height="7" rx="2"></rect>
@@ -621,7 +495,7 @@ HTML_HOME = """<!DOCTYPE html>
     </div>
 
     <h1>XÁC THỰC MÃ QR</h1>
-    <p class="sub">Khởi tạo phiên duyệt web tự động và trích xuất dữ liệu đăng nhập</p>
+    <p class="sub">Tạo phiên duyệt web tự động và quét mã để trích xuất cookie</p>
 
     <button id="btn-start" class="btn-pill" onclick="startQR()">
         <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
@@ -633,12 +507,12 @@ HTML_HOME = """<!DOCTYPE html>
     <div class="guide-box">
         <div class="guide-title">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-            Hướng dẫn thao tác
+            Quy trình xác thực
         </div>
-        <div class="guide-item"><span class="guide-badge">1</span> Nhấn nút khởi tạo mã QR phía trên</div>
-        <div class="guide-item"><span class="guide-badge">2</span> Đợi hệ thống tải trang đăng nhập trong giây lát</div>
-        <div class="guide-item"><span class="guide-badge">3</span> Sử dụng app Zalo trên điện thoại để quét mã</div>
-        <div class="guide-item"><span class="guide-badge">4</span> Xác nhận Cho phép đăng nhập trên màn hình máy</div>
+        <div class="guide-item"><span class="guide-badge">1</span> Nhấn Khởi tạo mã QR để nạp trang Zalo</div>
+        <div class="guide-item"><span class="guide-badge">2</span> Mở app Zalo trên điện thoại và quét mã hiển thị</div>
+        <div class="guide-item"><span class="guide-badge">3</span> Xác nhận đồng ý đăng nhập trên điện thoại</div>
+        <div class="guide-item"><span class="guide-badge">4</span> Web tự nhận diện và xuất ngay IMEI & Cookie</div>
     </div>
 </div>
 
@@ -646,20 +520,20 @@ HTML_HOME = """<!DOCTYPE html>
 async function startQR() {
     const btn = document.getElementById('btn-start');
     btn.disabled = true;
-    btn.innerHTML = '<svg viewBox="0 0 24 24" style="animation:spin 1s linear infinite;"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg><span>ĐANG KHỞI TẠO...</span>';
+    btn.innerHTML = '<svg class="spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-opacity="0.2"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg><span>ĐANG KHỞI TẠO...</span>';
     try {
         const r = await fetch('/api/qr/create', { method: 'POST' });
         const d = await r.json();
         if (d.ok) {
             btn.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg><span>HOÀN TẤT</span>';
-            setTimeout(function() { window.location.href = d.qr_url; }, 300);
+            setTimeout(function() { window.location.href = d.qr_url; }, 250);
         } else {
             alert('Lỗi: ' + (d.error || 'Không rõ nguyên nhân'));
             btn.disabled = false;
             btn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>KHỞI TẠO MÃ QR</span>';
         }
     } catch (e) {
-        alert('Lỗi kết nối: ' + e.message);
+        alert('Lỗi kết nối máy chủ');
         btn.disabled = false;
         btn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>KHỞI TẠO MÃ QR</span>';
     }
@@ -675,91 +549,84 @@ HTML_QR = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Quét QR — Pure Minimalist</title>
+<title>Quét QR — Snow White</title>
 <style>
 """ + SHARED_CSS + """
 .qr-frame {
     position:relative;
     background:#ffffff;
-    padding:16px; border-radius:28px;
-    margin:0 auto 16px; max-width:320px; width:100%;
-    border:1.5px solid #e4e4e7;
-    box-shadow:0 12px 30px rgba(0, 0, 0, 0.04);
+    padding:16px; border-radius:26px;
+    margin:0 auto 16px; max-width:300px; width:100%;
+    border:1.5px solid #e2e8f0;
+    box-shadow:0 8px 24px rgba(0, 0, 0, 0.04);
+    min-height:260px;
+    display:flex; align-items:center; justify-content:center;
 }
 .qr-frame img {
-    width:100%; height:auto; display:block; border-radius:18px;
-    background:#fafafa; min-height:220px; object-fit:contain;
+    width:100%; height:auto; display:block; border-radius:16px;
+    object-fit:contain;
 }
-.qr-desc {
-    display:flex; align-items:center; justify-content:center; gap:8px;
-    font-size:12px; color:#71717a; font-weight:600; margin-bottom:20px;
+.qr-loader {
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+    color:#64748b; font-size:12px; font-weight:600;
 }
-.qr-desc svg { width:15px; height:15px; stroke:#71717a; fill:none; stroke-width:2; }
+.qr-loader svg { width:28px; height:28px; stroke:#0f172a; stroke-width:2; fill:none; }
 
 .status-badge {
     padding:12px 18px; border-radius:9999px;
     font-size:13px; font-weight:600;
     display:inline-flex; align-items:center; justify-content:center; gap:8px;
-    background:#f4f4f5; color:#09090b;
+    background:#f8fafc; color:#0f172a;
     margin-bottom:18px; width:100%;
-    border:1px solid #e4e4e7;
-}
-.status-badge.error {
-    background:#fef2f2; color:#991b1b; border-color:#fecaca;
+    border:1px solid #e2e8f0;
 }
 .status-badge svg { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:2.2; }
-
-@keyframes spin {
-    0% { transform:rotate(0deg); }
-    100% { transform:rotate(360deg); }
-}
-.spin { animation:spin 1s linear infinite; }
 
 .result-card { text-align:left; }
 .success-banner {
     text-align:center; padding:18px;
-    background:#f4f4f5; border-radius:24px; margin-bottom:18px;
-    border:1px solid #e4e4e7;
+    background:#f8fafc; border-radius:22px; margin-bottom:16px;
+    border:1px solid #e2e8f0;
 }
 .success-badge-icon {
-    width:48px; height:48px; border-radius:50%; margin:0 auto 10px;
+    width:46px; height:46px; border-radius:50%; margin:0 auto 10px;
     background:#ffffff; display:flex; align-items:center; justify-content:center;
-    box-shadow:0 4px 14px rgba(0, 0, 0, 0.06);
-    border:1px solid #e4e4e7;
+    box-shadow:0 4px 12px rgba(0, 0, 0, 0.05);
+    border:1px solid #e2e8f0;
 }
-.success-badge-icon svg { width:24px; height:24px; stroke:#09090b; stroke-width:2.5; fill:none; }
+.success-badge-icon svg { width:22px; height:22px; stroke:#0f172a; stroke-width:2.5; fill:none; }
 .success-banner-title {
-    font-size:16px; font-weight:800; color:#09090b;
+    font-size:16px; font-weight:800; color:#0f172a;
 }
 
 .data-box {
     padding:14px 18px; border-radius:20px;
     background:#fafafa; margin-bottom:12px;
-    border:1px solid #e4e4e7;
+    border:1px solid #e2e8f0;
 }
 .data-label {
     display:flex; align-items:center; gap:7px;
-    font-size:11px; color:#71717a; text-transform:uppercase;
+    font-size:11px; color:#64748b; text-transform:uppercase;
     font-weight:800; letter-spacing:0.8px; margin-bottom:6px;
 }
-.data-label svg { width:14px; height:14px; stroke:#71717a; fill:none; stroke-width:2; }
+.data-label svg { width:14px; height:14px; stroke:#64748b; fill:none; stroke-width:2; }
 .data-val {
     font-family:-apple-system, BlinkMacSystemFont, "SF Mono", monospace;
-    font-size:12px; color:#09090b; word-break:break-all;
+    font-size:12px; color:#0f172a; word-break:break-all;
     font-weight:600; line-height:1.5;
 }
 .data-val.scrollable {
     max-height:110px; overflow-y:auto;
     background:#ffffff; padding:10px; border-radius:12px;
-    border:1px solid #f4f4f5; margin-top:6px;
+    border:1px solid #f1f5f9; margin-top:6px;
 }
 
 .toast {
     position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
-    background:#09090b; color:#ffffff;
+    background:#0f172a; color:#ffffff;
     padding:12px 24px; border-radius:9999px;
     font-weight:600; font-size:13px; z-index:9999;
-    box-shadow:0 12px 30px rgba(0,0,0,0.3);
+    box-shadow:0 12px 30px rgba(0,0,0,0.25);
     display:flex; align-items:center; gap:8px;
 }
 .toast svg { width:16px; height:16px; stroke:#ffffff; stroke-width:2.5; fill:none; }
@@ -767,7 +634,7 @@ HTML_QR = """<!DOCTYPE html>
 </head>
 <body>
 <div class="card">
-    <div class="brand-icon">
+    <div class="brand-badge">
         <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
             <rect x="5" y="2" width="14" height="20" rx="3" ry="3"></rect>
             <line x1="12" y1="18" x2="12.01" y2="18"></line>
@@ -779,17 +646,17 @@ HTML_QR = """<!DOCTYPE html>
 
     <div id="qr-block">
         <div class="qr-frame">
-            <img id="qr-img" src="/qr-image/{{ session_id }}" alt="Mã QR">
-        </div>
-        <div class="qr-desc">
-            <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-            <span>Quét mã và xác nhận an toàn trên thiết bị</span>
+            <div id="qr-loading-indicator" class="qr-loader">
+                <svg class="spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-opacity="0.2"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>
+                <span>Đang tải mã QR...</span>
+            </div>
+            <img id="qr-img" src="/qr-image/{{ session_id }}" alt="Mã QR" style="display:none;" onload="onQrImageLoaded()" onerror="onQrImageError()">
         </div>
     </div>
 
     <div id="status" class="status-badge">
         <svg class="spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-opacity="0.2"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>
-        <span>Đang chờ quét...</span>
+        <span>Đang chờ thao tác quét...</span>
     </div>
 
     <button id="btn-refresh" class="btn-pill" onclick="refreshQR()">
@@ -804,7 +671,7 @@ HTML_QR = """<!DOCTYPE html>
         <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="20 6 9 17 4 12"></polyline>
         </svg>
-        <span>TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE</span>
+        <span>TÔI ĐÃ ĐỒNG Ý TRÊN ĐIỆN THOẠI</span>
     </button>
 </div>
 
@@ -813,10 +680,22 @@ const sessionId = "{{ session_id }}";
 let done = false;
 let lastQrVersion = 0;
 
+function onQrImageLoaded() {
+    document.getElementById('qr-loading-indicator').style.display = 'none';
+    document.getElementById('qr-img').style.display = 'block';
+}
+
+function onQrImageError() {
+    setTimeout(function() {
+        document.getElementById('qr-img').src = '/qr-image/' + sessionId + '?t=' + Date.now();
+    }, 2000);
+}
+
 async function check() {
     if (done) return;
     try {
         const r = await fetch('/api/qr/status/' + sessionId);
+        if (!r.ok) return;
         const d = await r.json();
         const el = document.getElementById('status');
 
@@ -827,17 +706,13 @@ async function check() {
 
         if (d.status === 'waiting' || d.status === 'creating') {
             el.className = 'status-badge';
-            el.innerHTML = '<svg class="spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-opacity="0.2"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg><span>Đang chờ thao tác quét...</span>';
+            el.innerHTML = '<svg class="spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-opacity="0.2"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg><span>Đang chờ quét...</span>';
         } else if (d.status === 'done') {
             done = true;
             showResult(d);
         } else if (d.status === 'error') {
-            el.className = 'status-badge error';
-            el.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg><span>' + (d.error || 'Lỗi thao tác') + '</span>';
-            done = true;
-        } else if (d.status === 'expired') {
             el.className = 'status-badge';
-            el.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg><span>Mã QR đã hết hạn</span>';
+            el.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg><span>' + (d.error || 'Lỗi thao tác') + '</span>';
             done = true;
         }
     } catch (e) {}
@@ -849,16 +724,16 @@ async function refreshQR() {
     btn.innerHTML = '<svg class="spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-opacity="0.2"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg><span>ĐANG LÀM MỚI...</span>';
     try {
         const r = await fetch('/api/qr/refresh/' + sessionId, { method: 'POST' });
-        const d = await r.json();
-        if (d.ok) {
+        if (r.ok) {
+            const d = await r.json();
             document.getElementById('qr-img').src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
             showToast('Đã làm mới mã QR');
             lastQrVersion = d.qr_version;
         } else {
-            alert('Lỗi: ' + (d.error || 'Không rõ'));
+            showToast('Phiên làm việc đã đóng, vui lòng tạo mới');
         }
     } catch (e) {
-        alert('Lỗi: ' + e.message);
+        showToast('Không thể kết nối máy chủ');
     }
     btn.disabled = false;
     btn.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg><span>LÀM MỚI MÃ QR</span>';
@@ -875,14 +750,14 @@ async function forceCheck() {
             done = true;
             showResult(d);
         } else {
-            alert('Chưa có xác thực thành công. Vui lòng thử lại sau vài giây.\\n' + (d.note || ''));
+            showToast(d.note || 'Chưa phát hiện đăng nhập');
             btn.disabled = false;
-            btn.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg><span>TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE</span>';
+            btn.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg><span>TÔI ĐÃ ĐỒNG Ý TRÊN ĐIỆN THOẠI</span>';
         }
     } catch (e) {
-        alert('Lỗi: ' + e.message);
+        showToast('Lỗi kiểm tra dữ liệu');
         btn.disabled = false;
-        btn.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg><span>TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE</span>';
+        btn.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg><span>TÔI ĐÃ ĐỒNG Ý TRÊN ĐIỆN THOẠI</span>';
     }
 }
 
@@ -996,9 +871,9 @@ HTML_EXPIRED = """<!DOCTYPE html>
 .expired-icon-wrap {
     width:64px; height:64px; border-radius:50%; margin:0 auto 18px;
     background:#fafafa; display:flex; align-items:center; justify-content:center;
-    border:1px solid #e4e4e7;
+    border:1px solid #e2e8f0;
 }
-.expired-icon-wrap svg { width:32px; height:32px; stroke:#71717a; stroke-width:2; fill:none; }
+.expired-icon-wrap svg { width:32px; height:32px; stroke:#64748b; stroke-width:2; fill:none; }
 </style>
 </head>
 <body>
