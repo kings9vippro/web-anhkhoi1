@@ -10,6 +10,7 @@ import string
 import subprocess
 import sys
 import shutil
+import stat
 
 from flask import Flask, request, jsonify, render_template_string, Response
 
@@ -17,25 +18,46 @@ QR_TTL = 600
 DATA_DIR = "/tmp/qr_sessions"
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# THƯ MỤC TRÚ GỤC TẠM CHO CHROMIUM ĐỂ TRÁNH LỖI ETXTBSY TRÊN RENDER
+CHROME_TMP_DIR = "/tmp/chrome_runner"
 
-def ensure_playwright_browsers():
+def setup_isolated_browser():
+    """Sao chép Chromium sang /tmp để cô lập file và tránh lỗi Text file busy (ETXTBSY)."""
     try:
+        print("[SETUP] Kiểm tra và chuẩn bị trình duyệt Chromium độc lập...")
         subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        
+        # Tìm đường dẫn chromium gốc của playwright
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            executable_path = p.chromium.executable_path
+            if executable_path and os.path.exists(executable_path):
+                source_dir = os.path.dirname(executable_path)
+                # Nếu nguồn tồn tại, sao chép sang /tmp/chrome_runner
+                if not os.path.exists(CHROME_TMP_DIR):
+                    print(f"[SETUP] Đang sao chép Chromium từ {source_dir} sang {CHROME_TMP_DIR}...")
+                    shutil.copytree(source_dir, CHROME_TMP_DIR, dirs_exist_ok=True)
+                
+                # Cấp quyền thực thi tuyệt đối cho file chrome
+                for root, dirs, files in os.walk(CHROME_TMP_DIR):
+                    for file in files:
+                        if file == "chrome" or file.endswith(".bin"):
+                            fp = os.path.join(root, file)
+                            os.chmod(fp, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+                print("[SETUP] Hoàn tất thiết lập Chromium độc lập tại /tmp.")
     except Exception as e:
-        print("[SETUP] Lỗi cài đặt Playwright: " + str(e))
+        print(f"[SETUP] Lỗi chuẩn bị trình duyệt: {str(e)}")
 
-
-threading.Thread(target=ensure_playwright_browsers, daemon=True).start()
-
+# Chạy thiết lập ngầm ngay khi khởi động
+threading.Thread(target=setup_isolated_browser, daemon=True).start()
 
 def sess_path(sid):
     return os.path.join(DATA_DIR, sid + ".json")
-
 
 def sess_save(sid, data):
     try:
@@ -44,7 +66,6 @@ def sess_save(sid, data):
     except Exception as e:
         print("[SESS] Save error: " + str(e))
 
-
 def sess_load(sid):
     try:
         with open(sess_path(sid), "r", encoding="utf-8") as f:
@@ -52,20 +73,17 @@ def sess_load(sid):
     except Exception:
         return None
 
-
 def sess_exists(sid):
     return os.path.exists(sess_path(sid))
 
-
 def gen_imei():
     return "".join(random.choices(string.digits, k=15))
-
 
 app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR CORE — FIX ETXTBSY & RENDER STABLE QR
+# ZALO QR CORE — ISOLATED EXECUTABLE RUNNER (FIX ETXTBSY)
 # ============================================================
 class ZaloQR:
     def __init__(self):
@@ -73,9 +91,13 @@ class ZaloQR:
         self.playwright = None
 
     async def _launch_browser(self):
-        return await self.playwright.chromium.launch(
-            headless=True,
-            args=[
+        # Trỏ trực tiếp trình duyệt chạy từ thư mục cô lập /tmp/chrome_runner để tránh khóa file gốc
+        chrome_bin = os.path.join(CHROME_TMP_DIR, "chrome")
+        executable_arg = chrome_bin if os.path.exists(chrome_bin) else None
+
+        launch_options = {
+            "headless": True,
+            "args": [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
@@ -83,29 +105,26 @@ class ZaloQR:
                 "--disable-blink-features=AutomationControlled",
                 "--window-size=1280,800",
             ],
-        )
+        }
+        if executable_arg:
+            launch_options["executable_path"] = executable_arg
+
+        return await self.playwright.chromium.launch(**launch_options)
 
     async def start(self):
         from playwright.async_api import async_playwright
         self.playwright = await async_playwright().start()
 
-        # Thử khởi chạy tối đa 3 lần nếu gặp lỗi ETXTBSY
         for attempt in range(3):
             try:
                 self.browser = await self._launch_browser()
                 return
             except Exception as e:
                 err_str = str(e).lower()
-                if "etxtbsy" in err_str:
-                    print(f"[QR] Gặp lỗi ETXTBSY (lần {attempt+1}), đang đợi thử lại...")
-                    await asyncio.sleep(2)
+                if "etxtbsy" in err_str or "text file busy" in err_str:
+                    print(f"[QR] Phát hiện ETXTBSY (lần {attempt+1}), đang đợi giải phóng...")
+                    await asyncio.sleep(2.5)
                     continue
-                elif "executable doesn't exist" in err_str or "playwright install" in err_str:
-                    print("[QR] Đang tải tự động Chromium...")
-                    loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, ensure_playwright_browsers)
-                    self.browser = await self._launch_browser()
-                    return
                 else:
                     raise e
         raise Exception("Không thể khởi chạy trình duyệt do lỗi ETXTBSY liên tục.")
@@ -184,8 +203,6 @@ class ZaloQR:
                 "qr_version": int(time.time()),
             })
 
-            print("[QR] Đã khởi tạo thành công phiên: " + session_id)
-
             ACTIVE_PAGES[session_id] = {
                 "page": page,
                 "browser": self.browser,
@@ -213,7 +230,6 @@ class ZaloQR:
                 ck_dict = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
 
                 if ck_dict.get("zpw_sek"):
-                    print("[QR] Đã bắt được token đăng nhập!")
                     await asyncio.sleep(2)
                     return await self._extract(session_id, page)
 
@@ -474,7 +490,7 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "version": "30.3", "device": "iphone-18-ua"})
+    return jsonify({"status": "ok", "version": "31.0", "device": "iphone-18-ua"})
 
 
 # ============================================================
