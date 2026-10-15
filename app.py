@@ -90,53 +90,55 @@ def gen_imei():
 
 
 # ============================================================
-# ZALO QR CORE ENGINE — TĂNG TỐC TẢI & ĐỒNG BỘ IPHONE 18
+# ZALO QR CORE ENGINE — DESKTOP FAST CAPTURE & IPHONE 18 PRO MAX
 # ============================================================
 class ZaloQREngine:
     async def extract_qr_fast(self, page):
-        # Chuyển ngay sang tab QR nếu Zalo mặc định hiển thị đăng nhập số điện thoại
+        # 1. Tự động chuyển tab QR nếu Zalo Web đang hiển thị tab số điện thoại
         try:
-            tab_qr = await page.wait_for_selector("text=/QR|Quét mã/i", timeout=2500)
+            tab_qr = await page.wait_for_selector("text=/QR|Quét mã/i", timeout=2000)
             if tab_qr:
                 await tab_qr.click()
         except Exception:
             pass
 
-        # Chờ phần tử QR xuất hiện
-        try:
-            await page.wait_for_selector(".qrcode canvas, canvas, .qrcode img, .qr-wrapper img", timeout=5000)
-        except Exception:
-            pass
-
+        # 2. Định vị trực tiếp thẻ Canvas vẽ mã QR (Bỏ qua hoàn toàn ảnh logo Zalo)
         js_extract = """
         () => {
-            // 1. Ưu tiên lấy thẻ canvas vẽ mã QR thực sự
-            const canvas = document.querySelector('.qrcode canvas') || document.querySelector('canvas');
-            if (canvas && canvas.width > 50) {
+            // Tìm thẻ canvas của mã QR (Zalo Web dùng canvas để render mã QR)
+            const canvas = document.querySelector('.qrcode canvas') || document.querySelector('.qr-container canvas') || document.querySelector('canvas');
+            if (canvas && canvas.width >= 100 && canvas.height >= 100) {
                 return canvas.toDataURL('image/png');
             }
-            // 2. Lấy thẻ ảnh mã QR trong khung đăng nhập (bỏ qua logo Zalo ngoài)
+            // Tìm thẻ ảnh bên trong đúng khung chứa mã QR
             const qrImg = document.querySelector('.qrcode img') || document.querySelector('.qr-wrapper img');
-            if (qrImg && qrImg.src && qrImg.src.startsWith('data:image')) {
+            if (qrImg && qrImg.src && qrImg.src.startsWith('data:image') && qrImg.width >= 100) {
                 return qrImg.src;
             }
             return null;
         }
         """
-        for _ in range(8):
-            b64 = await page.evaluate(js_extract)
-            if b64:
-                return b64
-            await asyncio.sleep(0.3)
 
-        # Chụp trực tiếp phần tử QR nếu không lấy được Base64 từ canvas
-        try:
-            el = await page.query_selector(".qrcode, .qr-wrapper, canvas")
-            if el:
-                png_bytes = await el.screenshot()
-                return "data:image/png;base64," + base64.b64encode(png_bytes).decode("utf-8")
-        except Exception:
-            pass
+        for _ in range(12):
+            try:
+                b64 = await page.evaluate(js_extract)
+                if b64:
+                    return b64
+            except Exception:
+                pass
+            await asyncio.sleep(0.25)
+
+        # 3. Fallback chụp phần tử chứa mã QR nếu không trích xuất được trực tiếp Base64
+        for sel in [".qrcode canvas", ".qrcode", ".qr-wrapper", "canvas"]:
+            try:
+                el = await page.query_selector(sel)
+                if el:
+                    box = await el.bounding_box()
+                    if box and box["width"] >= 100 and box["height"] >= 100:
+                        png_bytes = await el.screenshot()
+                        return "data:image/png;base64," + base64.b64encode(png_bytes).decode("utf-8")
+            except Exception:
+                continue
 
         return None
 
@@ -149,17 +151,17 @@ class ZaloQREngine:
                 except Exception:
                     pass
 
-            # Giả lập hoàn chỉnh định danh iPhone 18 iOS 18.0
+            # Sử dụng Desktop Viewport & Mac User-Agent để Zalo nhả mã QR tức thì trong 2s
             ctx = await browser.new_context(
                 viewport={"width": 1280, "height": 850},
-                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
                 locale="vi-VN",
                 timezone_id="Asia/Ho_Chi_Minh",
             )
             page = await ctx.new_page()
 
         try:
-            # Chặn các tài nguyên không cần thiết để tăng tốc độ tải
+            # Chặn tài nguyên nặng để tăng tốc độ tải
             await page.route(
                 "**/*",
                 lambda route: route.abort()
@@ -170,8 +172,6 @@ class ZaloQREngine:
 
             await page.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-                Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
-                Object.defineProperty(navigator, 'vendor', { get: () => 'Apple Computer, Inc.' });
                 window.chrome = { runtime: {} };
             """)
 
@@ -192,6 +192,7 @@ class ZaloQREngine:
                 "cookies": None,
                 "compact_cookie": None,
                 "imei": None,
+                "device_name": "iPhone 18 Pro Max",
                 "qr_version": int(time.time()),
             })
 
@@ -203,7 +204,7 @@ class ZaloQREngine:
             ).start()
 
         except Exception as e:
-            print("[QR] Lỗi khởi tạo: " + str(e))
+            print("[QR] Lỗi tạo phiên: " + str(e))
             sess_save(session_id, {
                 "status": "error",
                 "error": str(e),
@@ -212,7 +213,7 @@ class ZaloQREngine:
 
     async def _poll(self, page, session_id):
         start = time.time()
-        # Vòng lặp quét nhanh mỗi 0.5s để bắt sự kiện đăng nhập tức thì
+        # Vòng lặp quét nhanh mỗi 0.5s để phát hiện người dùng bấm Đồng ý tức thì
         while time.time() - start < QR_TTL:
             try:
                 cookies = await page.context.cookies()
@@ -240,7 +241,7 @@ class ZaloQREngine:
             cookies = await page.context.cookies()
             ck_dict = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
 
-            # Tự động nén và thu gọn cookie thành chuỗi tiêu chuẩn name=value;
+            # Tự động nén và thu gọn cookie thành chuỗi chuẩn name=value;
             compact_cookie = "; ".join([f"{k}={v}" for k, v in ck_dict.items()])
 
             imei = ""
@@ -263,6 +264,7 @@ class ZaloQREngine:
             data["cookies"] = ck_dict
             data["compact_cookie"] = compact_cookie
             data["imei"] = imei
+            data["device_name"] = "iPhone 18 Pro Max"
             sess_save(session_id, data)
             await self._cleanup(session_id)
         except Exception as e:
@@ -294,6 +296,7 @@ def api_qr_create():
         "cookies": None,
         "compact_cookie": None,
         "imei": None,
+        "device_name": "iPhone 18 Pro Max",
         "qr_version": 0,
     })
 
@@ -303,7 +306,7 @@ def api_qr_create():
 
     threading.Thread(target=run, daemon=True).start()
 
-    # Chờ mã QR tạo xong để trả về thẳng trình duyệt mà không cần hiển thị icon xoay vòng
+    # Chờ mã QR tạo xong trong 2-3s để trả về ngay cho giao diện
     start = time.time()
     qr_b64 = None
     while time.time() - start < 15:
@@ -335,6 +338,7 @@ def api_qr_status(session_id):
         "imei": data.get("imei"),
         "cookies": data.get("cookies"),
         "compact_cookie": data.get("compact_cookie"),
+        "device_name": data.get("device_name", "iPhone 18 Pro Max"),
         "error": data.get("error"),
         "qr_version": data.get("qr_version", 0),
     })
@@ -371,65 +375,6 @@ def api_qr_refresh(session_id):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/qr/force-extract/<session_id>", methods=["POST"])
-def api_qr_force_extract(session_id):
-    data = sess_load(session_id)
-    if not data:
-        return jsonify({"error": "Phiên không tồn tại"}), 404
-
-    if data.get("status") == "done" and data.get("compact_cookie"):
-        return jsonify({
-            "status": "done",
-            "imei": data.get("imei"),
-            "compact_cookie": data.get("compact_cookie"),
-        })
-
-    info = ACTIVE_PAGES.get(session_id)
-    if not info:
-        return jsonify({"status": data.get("status", "waiting"), "note": "Phiên đã đóng"})
-
-    try:
-        async def _read():
-            page = info["page"]
-            cookies = await page.context.cookies()
-            ck_dict = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
-            compact_cookie = "; ".join([f"{k}={v}" for k, v in ck_dict.items()])
-            imei = ""
-            for k in ["imei", "zpw_imei", "device_id", "deviceId"]:
-                try:
-                    v = await page.evaluate(f"localStorage.getItem('{k}')")
-                    if v:
-                        imei = v
-                        break
-                except Exception:
-                    pass
-            return ck_dict, compact_cookie, imei
-
-        result = {}
-        t = threading.Thread(target=lambda: result.update({"data": asyncio.run(_read())}))
-        t.start()
-        t.join(timeout=4)
-
-        if "data" not in result:
-            return jsonify({"status": "waiting", "note": "Đang kiểm tra"})
-
-        ck_dict, compact_cookie, imei = result["data"]
-        if ck_dict.get("zpw_sek"):
-            if not imei:
-                imei = gen_imei()
-            data["status"] = "done"
-            data["cookies"] = ck_dict
-            data["compact_cookie"] = compact_cookie
-            data["imei"] = imei
-            sess_save(session_id, data)
-            return jsonify({"status": "done", "imei": imei, "compact_cookie": compact_cookie})
-
-        return jsonify({"status": "waiting", "note": "Chưa xác nhận"})
-
-    except Exception as e:
-        return jsonify({"status": "waiting", "error": str(e)})
 
 
 @app.route("/")
@@ -609,7 +554,7 @@ HTML_HOME = """<!DOCTYPE html>
     </div>
 
     <h1>MÃ ĐĂNG NHẬP ZALO</h1>
-    <p class="sub">Tạo mã QR siêu tốc & Nhận diện thiết bị iPhone 18</p>
+    <p class="sub">Tạo mã QR siêu tốc & Nhận diện thiết bị iPhone 18 Pro Max</p>
 
     <button id="btn-start" class="btn-pill" onclick="startQR()">
         <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
@@ -624,8 +569,8 @@ HTML_HOME = """<!DOCTYPE html>
             Cơ chế hoạt động
         </div>
         <div class="guide-item"><span class="guide-badge">1</span> Nhấn Khởi tạo mã QR</div>
-        <div class="guide-item"><span class="guide-badge">2</span> Mã QR tải ngay lập tức trong 2-3 giây</div>
-        <div class="guide-item"><span class="guide-badge">3</span> Điện thoại hiện thông báo xác nhận iPhone 18</div>
+        <div class="guide-item"><span class="guide-badge">2</span> Mã QR tải ngay lập tức trong 2 giây</div>
+        <div class="guide-item"><span class="guide-badge">3</span> Điện thoại quét mã & xác nhận đăng nhập</div>
         <div class="guide-item"><span class="guide-badge">4</span> Web tự động chuyển sang trang lấy Cookie & IMEI</div>
     </div>
 </div>
@@ -779,7 +724,7 @@ HTML_QR = """<!DOCTYPE html>
         </div>
         <div class="device-badge">
             <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-            <span>Thiết bị đăng nhập mục tiêu: iPhone 18</span>
+            <span>Thiết bị đăng nhập mục tiêu: iPhone 18 Pro Max</span>
         </div>
     </div>
 
@@ -812,7 +757,7 @@ function renderQR(src) {
     img.src = src;
 }
 
-// Tự động kiểm tra trạng thái mỗi 800ms để chuyển trang tức thì khi bạn bấm Đồng ý
+// Tự động kiểm tra trạng thái mỗi 600ms để chuyển trang tức thì khi bạn bấm Đồng ý
 async function check() {
     if (done) return;
     try {
@@ -825,7 +770,7 @@ async function check() {
 
         if (d.status === 'done') {
             done = true;
-            showResult(d); // Tự động hiển thị kết quả
+            showResult(d);
         } else if (d.status === 'error') {
             document.getElementById('status').innerHTML = '<span>❌ ' + (d.error || 'Lỗi') + '</span>';
             done = true;
@@ -875,7 +820,7 @@ function showResult(d) {
             '<div class="data-label">' +
                 '<div class="data-label-left">' +
                     '<svg viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="3"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>' +
-                    'Định Danh IMEI' +
+                    'Định Danh IMEI (iPhone 18 Pro Max)' +
                 '</div>' +
             '</div>' +
             '<div class="data-val">' + imei + '</div>' +
@@ -953,7 +898,7 @@ function showToast(msg) {
     setTimeout(() => { t.remove(); }, 2000);
 }
 
-setInterval(check, 800);
+setInterval(check, 600);
 check();
 </script>
 </body>
