@@ -15,7 +15,7 @@ DATA_DIR = "/tmp/qr_sessions"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ============================================================
-# POOL USER-AGENT iPHONE / iPAD / MAC — CHỈ THIẾT BỊ IP
+# UA POOL — CHỈ iPHONE/iPAD/MAC (DÙNG ĐỂ HIỂN THỊ + LƯU)
 # ============================================================
 UA_POOL = [
     # ===== iPHONE 18 PRO MAX — iOS 19 =====
@@ -93,8 +93,17 @@ UA_POOL = [
 
 
 def pick_ua():
-    """Chọn ngẫu nhiên 1 UA iPhone/iPad/Mac."""
     return random.choice(UA_POOL)
+
+
+def ua_to_device(ua):
+    if "iPhone" in ua:
+        return "iPhone"
+    if "iPad" in ua:
+        return "iPad"
+    if "Macintosh" in ua:
+        return "Mac"
+    return "Unknown"
 
 
 def sess_path(sid):
@@ -129,24 +138,16 @@ app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR LOGIN — MỖI SESSION 1 UA iPHONE/iPAD/MAC RIÊNG
+# ZALO QR LOGIN — GIỮ NGUYÊN CƠ CHẾ v26 (KHÔNG is_mobile)
+# UA lấy từ POOL iPhone/iPad/Mac để lưu thông tin thiết bị
+# nhưng vẫn render được QR như desktop Chrome
 # ============================================================
 class ZaloQR:
     def __init__(self):
         self.browser = None
         self.playwright = None
-        self.ua = pick_ua()          # UA riêng cho từng session
-        self.device_name = self._device_from_ua(self.ua)
-
-    @staticmethod
-    def _device_from_ua(ua):
-        if "iPhone" in ua:
-            return "iPhone"
-        if "iPad" in ua:
-            return "iPad"
-        if "Macintosh" in ua:
-            return "Mac"
-        return "Unknown"
+        self.device_ua = pick_ua()                       # UA iPhone/iPad/Mac để lưu
+        self.device_name = ua_to_device(self.device_ua)
 
     async def start(self):
         from playwright.async_api import async_playwright
@@ -174,13 +175,17 @@ class ZaloQR:
     async def create_qr(self, session_id):
         try:
             await self.start()
+
+            # ==== CƠ CHẾ v26: UA DESKTOP CHROME — KHÔNG is_mobile ====
+            # Vẫn lưu device_name từ pool iPhone/Mac để hiển thị
             ctx = await self.browser.new_context(
                 viewport={"width": 600, "height": 900},
-                user_agent=self.ua,               # ← UA iPhone/iPad/Mac
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/122.0.0.0 Safari/537.36"
+                ),
                 locale="vi-VN",
-                is_mobile=("iPhone" in self.ua or "iPad" in self.ua),
-                has_touch=("iPhone" in self.ua or "iPad" in self.ua),
-                device_scale_factor=3,
             )
             page = await ctx.new_page()
 
@@ -219,8 +224,8 @@ class ZaloQR:
                 "cookies": None,
                 "imei": None,
                 "qr_version": int(time.time()),
-                "device": self.device_name,       # lưu tên thiết bị
-                "user_agent": self.ua,            # lưu UA
+                "device": self.device_name,
+                "user_agent": self.device_ua,
             })
 
             print("[QR] Session " + session_id + " ready | " + self.device_name)
@@ -239,6 +244,8 @@ class ZaloQR:
 
         except Exception as e:
             print("[QR] create_qr error: " + str(e))
+            import traceback
+            traceback.print_exc()
             sess_save(session_id, {
                 "status": "error",
                 "error": str(e),
@@ -371,7 +378,7 @@ def api_qr_create():
     threading.Thread(target=run, daemon=True).start()
 
     start = time.time()
-    while time.time() - start < 60:
+    while time.time() - start < 90:
         data = sess_load(session_id)
         if data and data["status"] in ("waiting", "error"):
             break
@@ -556,571 +563,4 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "version": "27.0"})
-
-
-# ============================================================
-# CSS — KÍNH LỎNG (LIQUID GLASS) + MỘT MÀU NỔI BẬT
-# ============================================================
-SHARED_CSS = """
-* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-html { -webkit-text-size-adjust:100%; touch-action:manipulation; }
-body {
-    font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
-    min-height:100vh; min-height:100dvh;
-    display:flex; align-items:center; justify-content:center;
-    background:
-        radial-gradient(circle at 15% 20%, rgba(0,229,255,0.35), transparent 45%),
-        radial-gradient(circle at 85% 30%, rgba(124,58,237,0.35), transparent 50%),
-        radial-gradient(circle at 50% 85%, rgba(0,255,170,0.30), transparent 50%),
-        linear-gradient(135deg,#0b0f1a 0%,#131a2b 50%,#0b0f1a 100%);
-    background-attachment:fixed;
-    padding:16px;
-    color:#fff;
-    overflow-x:hidden;
-}
-body::before {
-    content:"";
-    position:fixed; inset:-20%;
-    background:
-        radial-gradient(circle at 30% 40%, rgba(0,229,255,0.18), transparent 55%),
-        radial-gradient(circle at 70% 60%, rgba(168,85,247,0.18), transparent 55%);
-    filter:blur(40px);
-    animation:floatBg 14s ease-in-out infinite alternate;
-    pointer-events:none;
-    z-index:-1;
-}
-@keyframes floatBg {
-    0% { transform:translate(0,0) scale(1); }
-    100% { transform:translate(30px,-30px) scale(1.1); }
-}
-.card {
-    position:relative;
-    background:rgba(255,255,255,0.06);
-    backdrop-filter:blur(28px) saturate(200%);
-    -webkit-backdrop-filter:blur(28px) saturate(200%);
-    padding:34px 22px; border-radius:30px;
-    border:1px solid rgba(255,255,255,0.18);
-    box-shadow:
-        0 8px 32px rgba(0,0,0,0.5),
-        inset 0 1px 0 rgba(255,255,255,0.25),
-        inset 0 -1px 0 rgba(255,255,255,0.05);
-    text-align:center; max-width:520px; width:100%;
-    animation:cardIn 0.9s cubic-bezier(0.16,1,0.3,1);
-    overflow:hidden;
-}
-.card::after {
-    content:"";
-    position:absolute; top:-50%; left:-50%;
-    width:200%; height:200%;
-    background:linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.10) 50%, transparent 70%);
-    transform:rotate(25deg);
-    animation:shine 6s linear infinite;
-    pointer-events:none;
-}
-@keyframes shine {
-    0% { transform:translateX(-100%) rotate(25deg); }
-    100% { transform:translateX(100%) rotate(25deg); }
-}
-@keyframes cardIn {
-    from { opacity:0; transform:translateY(60px) scale(0.94); }
-    to { opacity:1; transform:translateY(0) scale(1); }
-}
-h1 {
-    color:#ffffff;
-    margin-bottom:8px;
-    font-size:24px; font-weight:900;
-    letter-spacing:-0.5px;
-    text-shadow:0 2px 20px rgba(0,229,255,0.5);
-}
-p.sub { color:rgba(255,255,255,0.65); margin-bottom:22px; font-size:13px; font-weight:500; }
-"""
-
-
-HTML_HOME = """<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Tạo QR — ALB</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<style>
-""" + SHARED_CSS + """
-.btn-start {
-    width:100%; padding:18px; border:none; border-radius:20px;
-    background:rgba(0,229,255,0.14);
-    border:1px solid rgba(0,229,255,0.55);
-    color:#00e5ff;
-    font-size:17px; font-weight:900;
-    font-family:inherit; cursor:pointer;
-    box-shadow:0 0 30px rgba(0,229,255,0.35), inset 0 0 20px rgba(0,229,255,0.10);
-    transition:all 0.3s ease;
-    backdrop-filter:blur(10px);
-}
-.btn-start:hover {
-    background:rgba(0,229,255,0.22);
-    box-shadow:0 0 45px rgba(0,229,255,0.55), inset 0 0 25px rgba(0,229,255,0.15);
-    transform:translateY(-3px);
-}
-.btn-start:disabled { opacity:0.6; cursor:wait; transform:none; }
-.steps {
-    margin-top:24px; text-align:left;
-    background:rgba(255,255,255,0.05);
-    border:1px solid rgba(255,255,255,0.12);
-    padding:18px; border-radius:18px;
-    font-size:13px; color:rgba(255,255,255,0.85); line-height:1.9;
-    backdrop-filter:blur(10px);
-}
-.steps b { color:#00e5ff; }
-.device-tag {
-    display:inline-block; margin-top:10px;
-    font-size:11px; color:#00e5ff;
-    background:rgba(0,229,255,0.10);
-    border:1px solid rgba(0,229,255,0.4);
-    padding:4px 12px; border-radius:20px;
-    font-weight:700;
-}
-</style>
-</head>
-<body>
-<div class="card">
-    <h1>📱 TẠO MÃ QR ZALO</h1>
-    <p class="sub">Quét QR → Nhận IMEI + Cookie</p>
-    <button id="btn-start" class="btn-start" onclick="startQR()">▶ TẠO MÃ QR</button>
-    <div class="device-tag">Device: iPhone / iPad / Mac</div>
-    <div class="steps">
-        <b>HƯỚNG DẪN</b><br>
-        1 › Bấm nút trên<br>
-        2 › Đợi 15-30 giây → QR hiện<br>
-        3 › Mở Zalo → QR → Quét<br>
-        4 › Đồng ý trên điện thoại<br>
-        5 › Web tự hiện IMEI + Cookie
-    </div>
-</div>
-<script>
-async function startQR() {
-    const btn = document.getElementById('btn-start');
-    btn.disabled = true;
-    btn.innerHTML = 'ĐANG TẠO QR...';
-    try {
-        const r = await fetch('/api/qr/create', { method: 'POST' });
-        const d = await r.json();
-        if (d.ok) {
-            btn.innerHTML = 'XONG!';
-            setTimeout(function() { window.location.href = d.qr_url; }, 300);
-        } else {
-            alert('Lỗi: ' + (d.error || 'Không rõ'));
-            btn.disabled = false;
-            btn.innerHTML = '▶ TẠO MÃ QR';
-        }
-    } catch (e) {
-        alert('Lỗi: ' + e.message);
-        btn.disabled = false;
-        btn.innerHTML = '▶ TẠO MÃ QR';
-    }
-}
-</script>
-</body>
-</html>
-"""
-
-
-HTML_QR = """<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Quét QR — ALB</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<style>
-""" + SHARED_CSS + """
-.qr-container {
-    background:rgba(255,255,255,0.95);
-    padding:10px; border-radius:20px;
-    margin:0 auto 14px; max-width:320px; width:100%;
-    box-shadow:
-        0 20px 50px rgba(0,0,0,0.5),
-        0 0 30px rgba(0,229,255,0.30);
-    border:1px solid rgba(0,229,255,0.5);
-    overflow:hidden;
-    animation:pulseQR 3s ease-in-out infinite;
-}
-@keyframes pulseQR {
-    0%,100% { box-shadow:0 20px 50px rgba(0,0,0,0.5), 0 0 30px rgba(0,229,255,0.30); }
-    50% { box-shadow:0 20px 50px rgba(0,0,0,0.5), 0 0 55px rgba(0,229,255,0.65); }
-}
-.qr-container img {
-    width:100%; height:auto; display:block; border-radius:14px;
-}
-.qr-label {
-    text-align:center; font-size:12px; color:rgba(255,255,255,0.75);
-    font-weight:600; margin-bottom:14px;
-    letter-spacing:0.3px;
-}
-.device-badge {
-    display:inline-block; margin-bottom:12px;
-    font-size:11px; color:#00e5ff;
-    background:rgba(0,229,255,0.10);
-    border:1px solid rgba(0,229,255,0.45);
-    padding:4px 12px; border-radius:20px;
-    font-weight:800; letter-spacing:0.5px;
-}
-.status {
-    padding:14px; border-radius:16px;
-    font-size:13px; font-weight:800;
-    display:flex; align-items:center; justify-content:center; gap:8px;
-    backdrop-filter:blur(10px);
-    border:1px solid rgba(255,255,255,0.15);
-}
-.status.waiting {
-    background:rgba(0,229,255,0.10);
-    color:#00e5ff;
-    border-color:rgba(0,229,255,0.4);
-    box-shadow:inset 0 0 20px rgba(0,229,255,0.08);
-}
-.status.error {
-    background:rgba(255,60,60,0.12);
-    color:#ff6b6b;
-    border-color:rgba(255,60,60,0.4);
-}
-.status.expired {
-    background:rgba(255,255,255,0.06);
-    color:rgba(255,255,255,0.7);
-}
-.confirm-btn {
-    width:100%; margin-top:10px; padding:14px;
-    background:rgba(0,229,255,0.14);
-    border:1px solid rgba(0,229,255,0.55);
-    color:#00e5ff;
-    border-radius:16px;
-    font-size:13px; font-weight:900; font-family:inherit; cursor:pointer;
-    box-shadow:0 0 25px rgba(0,229,255,0.30), inset 0 0 15px rgba(0,229,255,0.08);
-    transition:all 0.3s ease;
-    letter-spacing:0.5px;
-}
-.confirm-btn:hover {
-    background:rgba(0,229,255,0.24);
-    box-shadow:0 0 40px rgba(0,229,255,0.55), inset 0 0 20px rgba(0,229,255,0.12);
-}
-.confirm-btn.refresh {
-    background:rgba(255,200,0,0.12);
-    border-color:rgba(255,200,0,0.5);
-    color:#ffc800;
-    box-shadow:0 0 25px rgba(255,200,0,0.25), inset 0 0 15px rgba(255,200,0,0.08);
-}
-.confirm-btn.refresh:hover {
-    background:rgba(255,200,0,0.22);
-    box-shadow:0 0 40px rgba(255,200,0,0.5), inset 0 0 20px rgba(255,200,0,0.12);
-}
-.result-wrap { text-align:left; }
-.success-header {
-    text-align:center; padding:18px;
-    background:rgba(0,229,255,0.10);
-    border:1px solid rgba(0,229,255,0.4);
-    border-radius:18px; margin-bottom:16px;
-    box-shadow:inset 0 0 25px rgba(0,229,255,0.10);
-}
-.success-icon { font-size:46px; margin-bottom:6px; }
-.success-title { font-size:16px; font-weight:900; color:#00e5ff; letter-spacing:0.5px; }
-.result {
-    padding:14px; border-radius:16px;
-    background:rgba(255,255,255,0.05);
-    border:1px solid rgba(255,255,255,0.15);
-    margin-bottom:10px;
-    backdrop-filter:blur(10px);
-}
-.result .label {
-    font-size:10px; color:#00e5ff;
-    text-transform:uppercase; font-weight:900;
-    letter-spacing:1.5px; margin-bottom:6px;
-}
-.result .value {
-    font-family:'SF Mono',Menlo,monospace; font-size:11px;
-    color:#ffffff; word-break:break-all; line-height:1.6; font-weight:600;
-}
-.result .value.scroll {
-    max-height:150px; overflow-y:auto;
-    background:rgba(0,0,0,0.25); padding:10px;
-    border-radius:10px; margin-top:6px;
-    border:1px solid rgba(255,255,255,0.08);
-}
-.copy-btn {
-    width:100%; padding:14px; border-radius:14px;
-    background:rgba(0,229,255,0.14);
-    border:1px solid rgba(0,229,255,0.55);
-    color:#00e5ff;
-    font-size:13px; font-weight:900;
-    font-family:inherit; cursor:pointer; margin-top:8px;
-    box-shadow:0 0 22px rgba(0,229,255,0.28), inset 0 0 12px rgba(0,229,255,0.08);
-    transition:all 0.3s ease;
-    letter-spacing:0.5px;
-}
-.copy-btn:hover {
-    background:rgba(0,229,255,0.24);
-    box-shadow:0 0 38px rgba(0,229,255,0.55), inset 0 0 18px rgba(0,229,255,0.12);
-}
-.copy-btn.green { color:#00e5ff; border-color:rgba(0,229,255,0.6); background:rgba(0,229,255,0.16); }
-.copy-btn.purple { color:#a855f7; border-color:rgba(168,85,247,0.55); background:rgba(168,85,247,0.12); box-shadow:0 0 22px rgba(168,85,247,0.28), inset 0 0 12px rgba(168,85,247,0.08); }
-.copy-btn.purple:hover { background:rgba(168,85,247,0.22); box-shadow:0 0 38px rgba(168,85,247,0.55); }
-.copy-btn.blue { color:#3b82f6; border-color:rgba(59,130,246,0.55); background:rgba(59,130,246,0.12); box-shadow:0 0 22px rgba(59,130,246,0.28), inset 0 0 12px rgba(59,130,246,0.08); }
-.copy-btn.blue:hover { background:rgba(59,130,246,0.22); box-shadow:0 0 38px rgba(59,130,246,0.55); }
-.hint { margin-top:12px; font-size:11px; color:rgba(255,255,255,0.5); text-align:center; letter-spacing:0.3px; }
-.toast {
-    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
-    background:rgba(0,229,255,0.18);
-    border:1px solid rgba(0,229,255,0.6);
-    color:#00e5ff;
-    backdrop-filter:blur(20px);
-    padding:12px 24px; border-radius:50px;
-    font-weight:900; font-size:13px; z-index:9999;
-    box-shadow:0 0 30px rgba(0,229,255,0.5);
-    animation:toastIn 0.3s ease;
-}
-@keyframes toastIn {
-    from { opacity:0; transform:translate(-50%,20px); }
-    to { opacity:1; transform:translate(-50%,0); }
-}
-</style>
-</head>
-<body>
-<div class="card">
-    <h1>📱 QUÉT QR ZALO</h1>
-    <p class="sub">Mở Zalo → QR → Quét</p>
-    <div class="device-badge" id="device-badge">DEVICE: —</div>
-
-    <div id="qr-area">
-        <div class="qr-container">
-            <img id="qr-img" src="/qr-image/{{ session_id }}" alt="QR">
-        </div>
-        <div class="qr-label">QUÉT → ĐỒNG Ý TRÊN ĐIỆN THOẠI</div>
-    </div>
-
-    <div id="status" class="status waiting">
-        <span>⏳</span> <span>Đang chờ quét...</span>
-    </div>
-
-    <button id="btn-refresh" class="confirm-btn refresh" onclick="refreshQR()">
-        ↻ LÀM MỚI QR
-    </button>
-
-    <button id="btn-check" class="confirm-btn" onclick="forceCheck()">
-        ✓ TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE
-    </button>
-</div>
-
-<script>
-const sessionId = "{{ session_id }}";
-let done = false;
-let lastQrVersion = 0;
-
-async function check() {
-    if (done) return;
-    try {
-        const r = await fetch('/api/qr/status/' + sessionId);
-        const d = await r.json();
-        const el = document.getElementById('status');
-
-        if (d.device && d.device !== 'Unknown') {
-            document.getElementById('device-badge').textContent = 'DEVICE: ' + d.device;
-        }
-
-        if (d.qr_version && d.qr_version !== lastQrVersion) {
-            lastQrVersion = d.qr_version;
-            document.getElementById('qr-img').src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
-        }
-
-        if (d.status === 'waiting' || d.status === 'creating') {
-            el.className = 'status waiting';
-            el.innerHTML = '<span>⏳</span> <span>Đang chờ quét...</span>';
-        } else if (d.status === 'done') {
-            done = true;
-            showResult(d);
-        } else if (d.status === 'error') {
-            el.className = 'status error';
-            el.innerHTML = '<span>✕</span> <span>' + (d.error || 'Lỗi') + '</span>';
-            done = true;
-        } else if (d.status === 'expired') {
-            el.className = 'status expired';
-            el.innerHTML = '<span>⏰</span> <span>QR hết hạn</span>';
-            done = true;
-        }
-    } catch (e) {}
-}
-
-async function refreshQR() {
-    const btn = document.getElementById('btn-refresh');
-    btn.disabled = true;
-    btn.innerHTML = 'ĐANG LẤY QR MỚI...';
-    try {
-        const r = await fetch('/api/qr/refresh/' + sessionId, { method: 'POST' });
-        const d = await r.json();
-        if (d.ok) {
-            document.getElementById('qr-img').src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
-            showToast('ĐÃ LẤY QR MỚI');
-            lastQrVersion = d.qr_version;
-        } else {
-            alert('Lỗi: ' + (d.error || 'Không rõ'));
-        }
-    } catch (e) {
-        alert('Lỗi: ' + e.message);
-    }
-    btn.disabled = false;
-    btn.innerHTML = '↻ LÀM MỚI QR';
-}
-
-async function forceCheck() {
-    const btn = document.getElementById('btn-check');
-    btn.disabled = true;
-    btn.innerHTML = 'ĐANG LẤY COOKIE...';
-    try {
-        const r = await fetch('/api/qr/force-extract/' + sessionId, { method: 'POST' });
-        const d = await r.json();
-        if (d.status === 'done') {
-            done = true;
-            showResult(d);
-        } else {
-            alert('Chưa có cookie. Đợi 5-10 giây rồi thử lại.\n' + (d.note || ''));
-            btn.disabled = false;
-            btn.innerHTML = '✓ TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE';
-        }
-    } catch (e) {
-        alert('Lỗi: ' + e.message);
-        btn.disabled = false;
-        btn.innerHTML = '✓ TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE';
-    }
-}
-
-function escapeHtml(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-function showResult(d) {
-    const imei = d.imei || '000000000000000';
-    const cookies = d.cookies || {};
-    const cookiesStr = JSON.stringify(cookies);
-    const combo = imei + '|' + cookiesStr;
-    const device = d.device || 'Unknown';
-
-    document.getElementById('qr-area').style.display = 'none';
-    document.getElementById('btn-check').style.display = 'none';
-    document.getElementById('btn-refresh').style.display = 'none';
-    document.getElementById('device-badge').textContent = 'DEVICE: ' + device;
-
-    const el = document.getElementById('status');
-    el.className = 'status';
-    el.style.padding = '0';
-    el.style.background = 'transparent';
-    el.style.border = 'none';
-    el.innerHTML =
-        '<div class="result-wrap">' +
-            '<div class="success-header">' +
-                '<div class="success-icon">✓</div>' +
-                '<div class="success-title">ĐĂNG NHẬP THÀNH CÔNG</div>' +
-            '</div>' +
-            '<div class="result">' +
-                '<div class="label">DEVICE</div>' +
-                '<div class="value">' + escapeHtml(device) + '</div>' +
-            '</div>' +
-            '<div class="result">' +
-                '<div class="label">IMEI</div>' +
-                '<div class="value">' + escapeHtml(imei) + '</div>' +
-            '</div>' +
-            '<div class="result">' +
-                '<div class="label">COOKIE</div>' +
-                '<div class="value scroll">' + escapeHtml(cookiesStr) + '</div>' +
-            '</div>' +
-            '<button class="copy-btn green" id="copy-all">COPY CẢ IMEI + COOKIE</button>' +
-            '<button class="copy-btn blue" id="copy-imei">CHỈ COPY IMEI</button>' +
-            '<button class="copy-btn purple" id="copy-ck">CHỈ COPY COOKIE</button>' +
-            '<div class="hint">Copy → paste vào web</div>' +
-        '</div>';
-
-    document.getElementById('copy-all').onclick = function() { copyText(combo); };
-    document.getElementById('copy-imei').onclick = function() { copyText(imei); };
-    document.getElementById('copy-ck').onclick = function() { copyText(cookiesStr); };
-}
-
-function copyText(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function() {
-            showToast('ĐÃ COPY');
-        }).catch(function() { fallbackCopy(text); });
-    } else {
-        fallbackCopy(text);
-    }
-}
-
-function fallbackCopy(text) {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand('copy'); showToast('ĐÃ COPY'); }
-    catch (e) { prompt('Copy:', text); }
-    document.body.removeChild(ta);
-}
-
-function showToast(msg) {
-    const old = document.querySelector('.toast');
-    if (old) old.remove();
-    const t = document.createElement('div');
-    t.className = 'toast';
-    t.innerHTML = msg;
-    document.body.appendChild(t);
-    setTimeout(function() { t.remove(); }, 2000);
-}
-
-setInterval(check, 2000);
-check();
-</script>
-</body>
-</html>
-"""
-
-
-HTML_EXPIRED = """<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hết hạn</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<style>
-""" + SHARED_CSS + """
-.expired-icon { font-size:64px; margin-bottom:18px; }
-.expired-title { color:#ffffff; margin-bottom:12px; font-size:22px; font-weight:900; letter-spacing:-0.5px; }
-.expired-text { color:rgba(255,255,255,0.6); font-size:13px; margin-bottom:22px; }
-.expired-btn {
-    display:inline-block; padding:14px 28px;
-    background:rgba(0,229,255,0.14);
-    border:1px solid rgba(0,229,255,0.55);
-    color:#00e5ff;
-    border-radius:16px; text-decoration:none;
-    font-weight:900; font-size:13px;
-    box-shadow:0 0 25px rgba(0,229,255,0.30), inset 0 0 15px rgba(0,229,255,0.08);
-    transition:all 0.3s ease;
-    letter-spacing:0.5px;
-}
-.expired-btn:hover {
-    background:rgba(0,229,255,0.24);
-    box-shadow:0 0 40px rgba(0,229,255,0.55), inset 0 0 20px rgba(0,229,255,0.12);
-}
-</style>
-</head>
-<body>
-<div class="card">
-    <div class="expired-icon">⏰</div>
-    <div class="expired-title">SESSION HẾT HẠN</div>
-    <div class="expired-text">Tạo mã QR mới để tiếp tục</div>
-    <a href="/" class="expired-btn">↻ TẠO QR MỚI</a>
-</div>
-</body>
-</html>
-"""
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5001))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    return jsonify({"status": "ok", "version": "26.1"})
