@@ -7,12 +7,31 @@ import asyncio
 import threading
 import random
 import string
+import subprocess
+import sys
 
 from flask import Flask, request, jsonify, render_template_string, Response
 
 QR_TTL = 600
 DATA_DIR = "/tmp/qr_sessions"
 os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def ensure_playwright_browsers():
+    """Tự động cài đặt Chromium nếu môi trường Render chưa có sẵn."""
+    try:
+        print("[SETUP] Kiểm tra và tự động cài Chromium...")
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=False,
+        )
+        print("[SETUP] Cài đặt / kiểm tra Chromium hoàn tất.")
+    except Exception as e:
+        print("[SETUP] Lỗi khi chạy playwright install: " + str(e))
+
+
+# Chạy cài ngầm ngay khi app khởi động (hoạt động tốt với cả python app.py lẫn gunicorn)
+threading.Thread(target=ensure_playwright_browsers, daemon=True).start()
 
 
 def sess_path(sid):
@@ -54,10 +73,8 @@ class ZaloQR:
         self.browser = None
         self.playwright = None
 
-    async def start(self):
-        from playwright.async_api import async_playwright
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
+    async def _launch_browser(self):
+        return await self.playwright.chromium.launch(
             headless=True,
             args=[
                 "--no-sandbox",
@@ -70,6 +87,23 @@ class ZaloQR:
                 "--window-size=600,900",
             ],
         )
+
+    async def start(self):
+        from playwright.async_api import async_playwright
+        self.playwright = await async_playwright().start()
+
+        try:
+            self.browser = await self._launch_browser()
+        except Exception as e:
+            err_str = str(e).lower()
+            # Bắt lỗi thiếu file thực thi browser trên Render và tự khắc phục tại chỗ
+            if "executable doesn't exist" in err_str or "playwright install" in err_str:
+                print("[QR] Phát hiện thiếu Chromium, đang kích hoạt tải khẩn cấp...")
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, ensure_playwright_browsers)
+                self.browser = await self._launch_browser()
+            else:
+                raise e
 
     async def _capture_qr(self, page):
         try:
