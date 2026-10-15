@@ -64,7 +64,7 @@ app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR CORE — FIX BLANK SCREEN & CAPTURE QR ENGINE
+# ZALO QR CORE — FIX SYNTAX ERROR & RENDER STABLE QR
 # ============================================================
 class ZaloQR:
     def __init__(self):
@@ -102,20 +102,16 @@ class ZaloQR:
 
     async def _capture_qr(self, page):
         try:
-            # Thử đợi và tìm đúng vùng chứa mã QR (canvas hoặc thẻ chứa ảnh QR)
             for selector in ["canvas", ".qrcode-img", "img[alt*='QR']", ".qr-wrapper", "#app"]:
                 try:
                     el = await page.wait_for_selector(selector, timeout=4000)
                     if el:
                         box = await el.bounding_box()
                         if box and box["width"] > 30 and box["height"] > 30:
-                            print(f"[QR] Đã tìm thấy phần tử QR qua selector: {selector}")
                             return await el.screenshot()
                 except Exception:
                     continue
 
-            # Nếu không tìm thấy thẻ riêng lẻ, chụp khung hình chính giữa màn hình nơi chứa QR
-            print("[QR] Chụp fallback khung màn hình trung tâm...")
             return await page.screenshot(
                 full_page=False,
                 clip={"x": 350, "y": 150, "width": 580, "height": 500}
@@ -158,7 +154,6 @@ class ZaloQR:
                 if "ERR_ABORTED" not in str(e):
                     raise e
 
-            # Cho thời gian để JavaScript của Zalo Web render hoàn tất mã QR lên màn hình
             print("[QR] Đang đợi render mã QR...")
             await asyncio.sleep(7)
 
@@ -176,7 +171,7 @@ class ZaloQR:
                 "png_path": png_path,
                 "cookies": None,
                 "imei": None,
-                "qr_version": int(time.time(),
+                "qr_version": int(time.time()),
             })
 
             print("[QR] Đã khởi tạo thành công phiên: " + session_id)
@@ -469,7 +464,7 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "version": "30.1", "device": "iphone-18-ua"})
+    return jsonify({"status": "ok", "version": "30.2", "device": "iphone-18-ua"})
 
 
 # ============================================================
