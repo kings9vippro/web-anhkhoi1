@@ -14,97 +14,6 @@ QR_TTL = 600
 DATA_DIR = "/tmp/qr_sessions"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# ============================================================
-# UA POOL — CHỈ iPHONE/iPAD/MAC (DÙNG ĐỂ HIỂN THỊ + LƯU)
-# ============================================================
-UA_POOL = [
-    # ===== iPHONE 18 PRO MAX — iOS 19 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 19_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.1 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 18 / 18 PRO — iOS 19 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 19_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.0 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 17 PRO MAX — iOS 18.7 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 17 / 17 PRO — iOS 18.5 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 16 PRO MAX — iOS 18.3 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 16 PRO — iOS 18.2 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 16 / 16 PLUS — iOS 18.1 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 16E — iOS 18.0 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 15 PRO MAX — iOS 17.6 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 15 PRO — iOS 17.5 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 15 / 15 PLUS — iOS 17.4 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 14 PRO MAX — iOS 17.3 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1",
-
-    # ===== iPHONE 14 / 14 PLUS — iOS 17.2 =====
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
-
-    # ===== iPAD PRO M4 — iPadOS 18 =====
-    "Mozilla/5.0 (iPad; CPU OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPad; CPU OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPad; CPU OS 18_6_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1",
-
-    # ===== iPAD AIR M3 — iPadOS 17 =====
-    "Mozilla/5.0 (iPad; CPU OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (iPad; CPU OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-
-    # ===== MACBOOK PRO M4 — macOS 15 =====
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_2) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_8_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15",
-
-    # ===== MACBOOK AIR M3 — macOS 14 =====
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
-
-    # ===== iMAC M3 — macOS 14 =====
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-]
-
-
-def pick_ua():
-    return random.choice(UA_POOL)
-
-
-def ua_to_device(ua):
-    if "iPhone" in ua:
-        return "iPhone"
-    if "iPad" in ua:
-        return "iPad"
-    if "Macintosh" in ua:
-        return "Mac"
-    return "Unknown"
-
 
 def sess_path(sid):
     return os.path.join(DATA_DIR, sid + ".json")
@@ -138,16 +47,12 @@ app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR LOGIN — GIỮ NGUYÊN CƠ CHẾ v26 (KHÔNG is_mobile)
-# UA lấy từ POOL iPhone/iPad/Mac để lưu thông tin thiết bị
-# nhưng vẫn render được QR như desktop Chrome
+# ZALO QR LOGIN — iPhone 18 spoof
 # ============================================================
 class ZaloQR:
     def __init__(self):
         self.browser = None
         self.playwright = None
-        self.device_ua = pick_ua()                       # UA iPhone/iPad/Mac để lưu
-        self.device_name = ua_to_device(self.device_ua)
 
     async def start(self):
         from playwright.async_api import async_playwright
@@ -175,21 +80,30 @@ class ZaloQR:
     async def create_qr(self, session_id):
         try:
             await self.start()
-
-            # ==== CƠ CHẾ v26: UA DESKTOP CHROME — KHÔNG is_mobile ====
-            # Vẫn lưu device_name từ pool iPhone/Mac để hiển thị
             ctx = await self.browser.new_context(
-                viewport={"width": 600, "height": 900},
+                viewport={"width": 393, "height": 852},
+                device_scale_factor=3,
+                is_mobile=True,
+                has_touch=True,
                 user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/122.0.0.0 Safari/537.36"
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) "
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                    "Version/18.0 Mobile/15E148 Safari/604.1"
                 ),
                 locale="vi-VN",
+                timezone_id="Asia/Ho_Chi_Minh",
             )
             page = await ctx.new_page()
 
-            print("[QR] Mo chat.zalo.me | Device: " + self.device_name)
+            # Chèn script chống phát hiện automation
+            await page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
+                Object.defineProperty(navigator, 'vendor', { get: () => 'Apple Computer, Inc.' });
+                window.chrome = { runtime: {} };
+            """)
+
+            print("[QR] Mo chat.zalo.me (iPhone 18 UA)")
             await page.goto(
                 "https://chat.zalo.me/",
                 wait_until="networkidle",
@@ -224,17 +138,14 @@ class ZaloQR:
                 "cookies": None,
                 "imei": None,
                 "qr_version": int(time.time()),
-                "device": self.device_name,
-                "user_agent": self.device_ua,
             })
 
-            print("[QR] Session " + session_id + " ready | " + self.device_name)
+            print("[QR] Session " + session_id + " ready")
 
             ACTIVE_PAGES[session_id] = {
                 "page": page,
                 "browser": self.browser,
                 "playwright": self.playwright,
-                "device": self.device_name,
             }
 
             threading.Thread(
@@ -244,13 +155,10 @@ class ZaloQR:
 
         except Exception as e:
             print("[QR] create_qr error: " + str(e))
-            import traceback
-            traceback.print_exc()
             sess_save(session_id, {
                 "status": "error",
                 "error": str(e),
                 "created_at": time.time(),
-                "device": self.device_name,
             })
 
     async def _poll(self, page, session_id):
@@ -331,7 +239,7 @@ class ZaloQR:
             data["imei"] = imei
             sess_save(session_id, data)
 
-            print("[QR] DONE - IMEI: " + imei + " | " + self.device_name)
+            print("[QR] DONE - IMEI: " + imei)
             await self._cleanup(session_id)
         except Exception as e:
             print("[QR] Extract error: " + str(e))
@@ -378,7 +286,7 @@ def api_qr_create():
     threading.Thread(target=run, daemon=True).start()
 
     start = time.time()
-    while time.time() - start < 90:
+    while time.time() - start < 60:
         data = sess_load(session_id)
         if data and data["status"] in ("waiting", "error"):
             break
@@ -403,7 +311,6 @@ def api_qr_status(session_id):
         "cookies": data.get("cookies"),
         "error": data.get("error"),
         "qr_version": data.get("qr_version", 0),
-        "device": data.get("device", "Unknown"),
     })
 
 
@@ -418,7 +325,6 @@ def api_qr_force_extract(session_id):
             "status": "done",
             "imei": data.get("imei"),
             "cookies": data.get("cookies"),
-            "device": data.get("device", "Unknown"),
         })
 
     info = ACTIVE_PAGES.get(session_id)
@@ -477,7 +383,6 @@ def api_qr_force_extract(session_id):
                 "status": "done",
                 "imei": imei,
                 "cookies": ck,
-                "device": data.get("device", "Unknown"),
             })
 
         return jsonify({
@@ -563,4 +468,566 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "version": "26.1"})
+    return jsonify({"status": "ok", "version": "28.0", "ua": "iPhone-18"})
+
+
+# ============================================================
+# LIQUID GLASS UI v28 — XANH NGỌC BÍCH
+# ============================================================
+SHARED_CSS = """
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html { -webkit-text-size-adjust:100%; touch-action:manipulation; }
+body {
+    font-family:'Inter','SF Pro Display',-apple-system,BlinkMacSystemFont,sans-serif;
+    min-height:100vh; min-height:100dvh;
+    display:flex; align-items:center; justify-content:center;
+    background:
+        radial-gradient(circle at 15% 15%, rgba(0,255,200,0.55), transparent 45%),
+        radial-gradient(circle at 85% 20%, rgba(0,180,255,0.55), transparent 45%),
+        radial-gradient(circle at 25% 85%, rgba(0,255,150,0.45), transparent 45%),
+        radial-gradient(circle at 80% 80%, rgba(0,220,255,0.5), transparent 45%),
+        linear-gradient(135deg, #00c9a7 0%, #00b4d8 35%, #0077b6 70%, #023e8a 100%);
+    background-size:200% 200%, 200% 200%, 200% 200%, 200% 200%, 100% 100%;
+    animation:liquidShift 22s ease-in-out infinite;
+    padding:16px;
+    overflow-x:hidden;
+}
+@keyframes liquidShift {
+    0%,100% { background-position:0% 0%, 100% 0%, 0% 100%, 100% 100%, 0% 50%; }
+    50% { background-position:100% 100%, 0% 100%, 100% 0%, 0% 0%, 100% 50%; }
+}
+.card {
+    position:relative;
+    background:rgba(255,255,255,0.12);
+    backdrop-filter:blur(40px) saturate(200%);
+    -webkit-backdrop-filter:blur(40px) saturate(200%);
+    padding:38px 24px 34px;
+    border-radius:36px;
+    border:1.5px solid rgba(255,255,255,0.35);
+    box-shadow:
+        0 30px 90px rgba(0,60,80,0.45),
+        inset 0 1px 1px rgba(255,255,255,0.6),
+        inset 0 -1px 1px rgba(0,255,200,0.15);
+    text-align:center; max-width:520px; width:100%;
+    animation:cardIn 0.9s cubic-bezier(0.16,1,0.3,1);
+    overflow:hidden;
+}
+.card::before {
+    content:'';
+    position:absolute; top:-50%; left:-50%;
+    width:200%; height:200%;
+    background:linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%);
+    animation:shine 6s linear infinite;
+    pointer-events:none;
+}
+@keyframes shine {
+    0% { transform:translateX(-100%) rotate(15deg); }
+    100% { transform:translateX(100%) rotate(15deg); }
+}
+@keyframes cardIn {
+    from { opacity:0; transform:translateY(70px) scale(0.92); }
+    to { opacity:1; transform:translateY(0) scale(1); }
+}
+h1 {
+    color:#ffffff;
+    margin-bottom:8px;
+    font-size:25px; font-weight:900;
+    letter-spacing:-0.5px;
+    text-shadow:0 4px 24px rgba(0,255,200,0.65), 0 0 40px rgba(0,200,255,0.4);
+    background:linear-gradient(135deg,#ffffff,#a7ffeb,#80deea);
+    -webkit-background-clip:text;
+    -webkit-text-fill-color:transparent;
+    background-clip:text;
+}
+p.sub {
+    color:rgba(255,255,255,0.85);
+    margin-bottom:24px; font-size:13px; font-weight:500;
+    text-shadow:0 2px 10px rgba(0,0,0,0.25);
+}
+"""
+
+
+HTML_HOME = """<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Tạo QR — Liquid Glass</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+""" + SHARED_CSS + """
+.btn-start {
+    position:relative;
+    width:100%; padding:20px; border:none; border-radius:22px;
+    background:linear-gradient(135deg,rgba(0,255,200,0.9),rgba(0,180,255,0.9));
+    color:#003d4d; font-size:17px; font-weight:900;
+    font-family:inherit; cursor:pointer; letter-spacing:0.5px;
+    border:1.5px solid rgba(255,255,255,0.6);
+    box-shadow:
+        0 20px 50px rgba(0,200,180,0.55),
+        inset 0 1px 1px rgba(255,255,255,0.9),
+        inset 0 -2px 6px rgba(0,120,140,0.25);
+    transition:all 0.35s cubic-bezier(0.16,1,0.3,1);
+    overflow:hidden;
+}
+.btn-start::after {
+    content:'';
+    position:absolute; top:0; left:-100%;
+    width:100%; height:100%;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,0.6),transparent);
+    transition:left 0.6s;
+}
+.btn-start:hover::after { left:100%; }
+.btn-start:hover {
+    transform:translateY(-5px) scale(1.02);
+    box-shadow:0 28px 65px rgba(0,200,180,0.7);
+}
+.btn-start:active { transform:translateY(-1px) scale(0.99); }
+.btn-start:disabled { opacity:0.75; cursor:wait; }
+.steps {
+    margin-top:26px; text-align:left;
+    background:rgba(255,255,255,0.14);
+    backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,0.3);
+    padding:20px; border-radius:20px;
+    font-size:13px; color:#ffffff; line-height:2;
+    text-shadow:0 1px 6px rgba(0,0,0,0.3);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,0.4);
+}
+.steps b { color:#a7ffeb; font-weight:900; }
+</style>
+</head>
+<body>
+<div class="card">
+    <h1>☎️ TẠO MÃ QR ZALO</h1>
+    <p class="sub">✨ Liquid Glass v28 — iPhone 18 UA — Quét QR lấy IMEI + Cookie</p>
+    <button id="btn-start" class="btn-start" onclick="startQR()">🚀 TẠO MÃ QR</button>
+    <div class="steps">
+        <b>HƯỚNG DẪN:</b><br>
+        1️⃣ Bấm nút trên<br>
+        2️⃣ Đợi 15-30s → hiện mã QR<br>
+        3️⃣ Mở app Zalo → QR → Quét<br>
+        4️⃣ Đồng ý trên điện thoại<br>
+        5️⃣ Web tự hiện IMEI + Cookie
+    </div>
+</div>
+<script>
+async function startQR() {
+    const btn = document.getElementById('btn-start');
+    btn.disabled = true;
+    btn.innerHTML = '⏳ ĐANG TẠO QR...';
+    try {
+        const r = await fetch('/api/qr/create', { method: 'POST' });
+        const d = await r.json();
+        if (d.ok) {
+            btn.innerHTML = '✅ XONG!';
+            setTimeout(function() { window.location.href = d.qr_url; }, 300);
+        } else {
+            alert('Lỗi: ' + (d.error || 'Không rõ'));
+            btn.disabled = false;
+            btn.innerHTML = '🚀 TẠO MÃ QR';
+        }
+    } catch (e) {
+        alert('Lỗi: ' + e.message);
+        btn.disabled = false;
+        btn.innerHTML = '🚀 TẠO MÃ QR';
+    }
+}
+</script>
+</body>
+</html>
+"""
+
+
+HTML_QR = """<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Quét QR — Liquid Glass</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+""" + SHARED_CSS + """
+.qr-container {
+    position:relative;
+    background:rgba(255,255,255,0.95);
+    padding:10px; border-radius:22px;
+    margin:0 auto 16px; max-width:340px; width:100%;
+    border:2px solid rgba(0,255,200,0.6);
+    box-shadow:
+        0 20px 55px rgba(0,120,140,0.5),
+        0 0 40px rgba(0,255,200,0.35),
+        inset 0 1px 1px rgba(255,255,255,0.9);
+    overflow:hidden;
+}
+.qr-container img {
+    width:100%; height:auto; display:block; border-radius:14px;
+}
+.qr-label {
+    text-align:center; font-size:12px;
+    color:rgba(255,255,255,0.95);
+    font-weight:800; margin-bottom:16px;
+    text-shadow:0 2px 10px rgba(0,0,0,0.35);
+    letter-spacing:0.3px;
+}
+.status {
+    padding:15px; border-radius:16px;
+    font-size:13px; font-weight:800;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,0.4);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,0.5);
+}
+.status.waiting {
+    background:rgba(255,240,150,0.35);
+    color:#fff8e1;
+    text-shadow:0 1px 6px rgba(180,120,0,0.6);
+}
+.status.error {
+    background:rgba(255,120,120,0.35);
+    color:#ffe4e6;
+    text-shadow:0 1px 6px rgba(150,0,0,0.5);
+}
+.status.expired {
+    background:rgba(200,200,200,0.3);
+    color:#f1f5f9;
+}
+.confirm-btn {
+    width:100%; margin-top:12px; padding:16px;
+    background:linear-gradient(135deg,rgba(0,255,170,0.92),rgba(0,200,140,0.92));
+    color:#003d2b; border:1.5px solid rgba(255,255,255,0.6);
+    border-radius:16px;
+    font-size:13px; font-weight:900;
+    font-family:inherit; cursor:pointer; letter-spacing:0.4px;
+    box-shadow:
+        0 14px 35px rgba(0,220,160,0.55),
+        inset 0 1px 1px rgba(255,255,255,0.85);
+    transition:all 0.3s cubic-bezier(0.16,1,0.3,1);
+}
+.confirm-btn:hover { transform:translateY(-3px) scale(1.01); }
+.confirm-btn:active { transform:translateY(0) scale(0.99); }
+.confirm-btn.refresh {
+    background:linear-gradient(135deg,rgba(255,200,80,0.9),rgba(255,150,40,0.9));
+    color:#4a2800;
+    box-shadow:0 14px 35px rgba(255,160,40,0.5), inset 0 1px 1px rgba(255,255,255,0.85);
+}
+.result-wrap { text-align:left; }
+.success-header {
+    text-align:center; padding:20px;
+    background:linear-gradient(135deg,rgba(0,255,180,0.35),rgba(0,220,255,0.3));
+    border-radius:22px; margin-bottom:18px;
+    border:1px solid rgba(255,255,255,0.5);
+    backdrop-filter:blur(20px);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,0.6);
+}
+.success-icon { font-size:48px; margin-bottom:8px; filter:drop-shadow(0 0 20px rgba(0,255,200,0.8)); }
+.success-title {
+    font-size:17px; font-weight:900; color:#ffffff;
+    text-shadow:0 2px 14px rgba(0,255,200,0.7);
+    letter-spacing:0.3px;
+}
+.result {
+    padding:15px; border-radius:16px;
+    background:rgba(255,255,255,0.18);
+    backdrop-filter:blur(24px);
+    margin-bottom:12px;
+    border:1px solid rgba(255,255,255,0.35);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,0.5);
+}
+.result .label {
+    font-size:10px; color:#a7ffeb;
+    text-transform:uppercase; font-weight:900;
+    letter-spacing:1.5px; margin-bottom:7px;
+    text-shadow:0 1px 6px rgba(0,255,200,0.5);
+}
+.result .value {
+    font-family:'SF Mono','Fira Code',monospace;
+    font-size:11px; color:#ffffff;
+    word-break:break-all; line-height:1.6; font-weight:600;
+    text-shadow:0 1px 4px rgba(0,0,0,0.3);
+}
+.result .value.scroll {
+    max-height:150px; overflow-y:auto;
+    background:rgba(0,0,0,0.2); padding:10px;
+    border-radius:10px; margin-top:8px;
+    border:1px solid rgba(255,255,255,0.15);
+}
+.copy-btn {
+    width:100%; padding:15px; border:none; border-radius:14px;
+    color:white; font-size:13px; font-weight:900;
+    font-family:inherit; cursor:pointer; margin-top:10px;
+    letter-spacing:0.4px;
+    border:1.5px solid rgba(255,255,255,0.55);
+    transition:all 0.3s cubic-bezier(0.16,1,0.3,1);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,0.5);
+}
+.copy-btn:hover { transform:translateY(-3px) scale(1.01); }
+.copy-btn:active { transform:translateY(0) scale(0.99); }
+.copy-btn.green {
+    background:linear-gradient(135deg,rgba(0,255,170,0.9),rgba(0,200,140,0.9));
+    color:#003d2b;
+    box-shadow:0 12px 30px rgba(0,220,160,0.5), inset 0 1px 1px rgba(255,255,255,0.85);
+}
+.copy-btn.purple {
+    background:linear-gradient(135deg,rgba(180,130,255,0.9),rgba(140,80,240,0.9));
+    box-shadow:0 12px 30px rgba(150,80,240,0.5), inset 0 1px 1px rgba(255,255,255,0.5);
+}
+.copy-btn.blue {
+    background:linear-gradient(135deg,rgba(80,190,255,0.9),rgba(30,140,240,0.9));
+    box-shadow:0 12px 30px rgba(30,140,240,0.5), inset 0 1px 1px rgba(255,255,255,0.5);
+}
+.hint {
+    margin-top:12px; font-size:11px;
+    color:rgba(255,255,255,0.8); text-align:center;
+    text-shadow:0 1px 6px rgba(0,0,0,0.3);
+}
+.toast {
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:linear-gradient(135deg,rgba(0,255,180,0.95),rgba(0,200,140,0.95));
+    backdrop-filter:blur(20px);
+    color:#003d2b; padding:14px 28px; border-radius:50px;
+    font-weight:900; font-size:13px; z-index:9999;
+    border:1.5px solid rgba(255,255,255,0.7);
+    box-shadow:0 16px 40px rgba(0,220,160,0.6), inset 0 1px 1px rgba(255,255,255,0.9);
+    animation:toastIn 0.35s cubic-bezier(0.16,1,0.3,1);
+}
+@keyframes toastIn {
+    from { opacity:0; transform:translate(-50%,30px) scale(0.9); }
+    to { opacity:1; transform:translate(-50%,0) scale(1); }
+}
+</style>
+</head>
+<body>
+<div class="card">
+    <h1>☎️ QUÉT QR ZALO</h1>
+    <p class="sub">✨ Liquid Glass v28 — iPhone 18 — Mở app Zalo → QR → Quét</p>
+
+    <div id="qr-area">
+        <div class="qr-container">
+            <img id="qr-img" src="/qr-image/{{ session_id }}" alt="QR">
+        </div>
+        <div class="qr-label">📱 Quét → Đồng ý trên điện thoại</div>
+    </div>
+
+    <div id="status" class="status waiting">
+        <span>⏳</span> <span>Đang chờ quét...</span>
+    </div>
+
+    <button id="btn-refresh" class="confirm-btn refresh" onclick="refreshQR()">
+        🔄 LÀM MỚI QR
+    </button>
+
+    <button id="btn-check" class="confirm-btn" onclick="forceCheck()">
+        ✅ TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE
+    </button>
+</div>
+
+<script>
+const sessionId = "{{ session_id }}";
+let done = false;
+let lastQrVersion = 0;
+
+async function check() {
+    if (done) return;
+    try {
+        const r = await fetch('/api/qr/status/' + sessionId);
+        const d = await r.json();
+        const el = document.getElementById('status');
+
+        if (d.qr_version && d.qr_version !== lastQrVersion) {
+            lastQrVersion = d.qr_version;
+            document.getElementById('qr-img').src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
+        }
+
+        if (d.status === 'waiting' || d.status === 'creating') {
+            el.className = 'status waiting';
+            el.innerHTML = '<span>⏳</span> <span>Đang chờ quét...</span>';
+        } else if (d.status === 'done') {
+            done = true;
+            showResult(d);
+        } else if (d.status === 'error') {
+            el.className = 'status error';
+            el.innerHTML = '<span>❌</span> <span>' + (d.error || 'Lỗi') + '</span>';
+            done = true;
+        } else if (d.status === 'expired') {
+            el.className = 'status expired';
+            el.innerHTML = '<span>⏰</span> <span>QR hết hạn</span>';
+            done = true;
+        }
+    } catch (e) {}
+}
+
+async function refreshQR() {
+    const btn = document.getElementById('btn-refresh');
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Đang lấy QR mới...';
+    try {
+        const r = await fetch('/api/qr/refresh/' + sessionId, { method: 'POST' });
+        const d = await r.json();
+        if (d.ok) {
+            document.getElementById('qr-img').src = '/qr-image/' + sessionId + '?v=' + d.qr_version;
+            showToast('✅ Đã lấy QR mới!');
+            lastQrVersion = d.qr_version;
+        } else {
+            alert('Lỗi: ' + (d.error || 'Không rõ'));
+        }
+    } catch (e) {
+        alert('Lỗi: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.innerHTML = '🔄 LÀM MỚI QR';
+}
+
+async function forceCheck() {
+    const btn = document.getElementById('btn-check');
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Đang lấy cookie...';
+    try {
+        const r = await fetch('/api/qr/force-extract/' + sessionId, { method: 'POST' });
+        const d = await r.json();
+        if (d.status === 'done') {
+            done = true;
+            showResult(d);
+        } else {
+            alert('Chưa có cookie. Đợi 5-10 giây rồi thử lại.\\n' + (d.note || ''));
+            btn.disabled = false;
+            btn.innerHTML = '✅ TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE';
+        }
+    } catch (e) {
+        alert('Lỗi: ' + e.message);
+        btn.disabled = false;
+        btn.innerHTML = '✅ TÔI ĐÃ ĐỒNG Ý - LẤY COOKIE';
+    }
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function showResult(d) {
+    const imei = d.imei || '000000000000000';
+    const cookies = d.cookies || {};
+    const cookiesStr = JSON.stringify(cookies);
+    const combo = imei + '|' + cookiesStr;
+
+    document.getElementById('qr-area').style.display = 'none';
+    document.getElementById('btn-check').style.display = 'none';
+    document.getElementById('btn-refresh').style.display = 'none';
+
+    const el = document.getElementById('status');
+    el.className = 'status';
+    el.style.padding = '0';
+    el.style.background = 'transparent';
+    el.style.border = 'none';
+    el.style.boxShadow = 'none';
+    el.innerHTML =
+        '<div class="result-wrap">' +
+            '<div class="success-header">' +
+                '<div class="success-icon">✅</div>' +
+                '<div class="success-title">ĐĂNG NHẬP THÀNH CÔNG!</div>' +
+            '</div>' +
+            '<div class="result">' +
+                '<div class="label">📞 IMEI</div>' +
+                '<div class="value">' + escapeHtml(imei) + '</div>' +
+            '</div>' +
+            '<div class="result">' +
+                '<div class="label">🍪 COOKIE</div>' +
+                '<div class="value scroll">' + escapeHtml(cookiesStr) + '</div>' +
+            '</div>' +
+            '<button class="copy-btn green" id="copy-all">📋 COPY CẢ IMEI + COOKIE</button>' +
+            '<button class="copy-btn blue" id="copy-imei">📞 CHỈ COPY IMEI</button>' +
+            '<button class="copy-btn purple" id="copy-ck">🍪 CHỈ COPY COOKIE</button>' +
+            '<div class="hint">Copy → paste vào web spam</div>' +
+        '</div>';
+
+    document.getElementById('copy-all').onclick = function() { copyText(combo); };
+    document.getElementById('copy-imei').onclick = function() { copyText(imei); };
+    document.getElementById('copy-ck').onclick = function() { copyText(cookiesStr); };
+}
+
+function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+            showToast('✅ Đã copy!');
+        }).catch(function() { fallbackCopy(text); });
+    } else {
+        fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); showToast('✅ Đã copy!'); }
+    catch (e) { prompt('Copy:', text); }
+    document.body.removeChild(ta);
+}
+
+function showToast(msg) {
+    const old = document.querySelector('.toast');
+    if (old) old.remove();
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.innerHTML = msg;
+    document.body.appendChild(t);
+    setTimeout(function() { t.remove(); }, 2000);
+}
+
+setInterval(check, 2000);
+check();
+</script>
+</body>
+</html>
+"""
+
+
+HTML_EXPIRED = """<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hết hạn — Liquid Glass</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+""" + SHARED_CSS + """
+.expired-icon { font-size:68px; margin-bottom:20px; filter:drop-shadow(0 0 30px rgba(0,255,200,0.7)); }
+.expired-title {
+    color:#ffffff; margin-bottom:14px; font-size:23px; font-weight:900;
+    text-shadow:0 2px 14px rgba(0,255,200,0.6);
+    letter-spacing:-0.3px;
+}
+.expired-text {
+    color:rgba(255,255,255,0.85); font-size:13px; margin-bottom:24px;
+    text-shadow:0 1px 8px rgba(0,0,0,0.3);
+}
+.expired-btn {
+    display:inline-block; padding:16px 32px;
+    background:linear-gradient(135deg,rgba(0,255,200,0.9),rgba(0,180,255,0.9));
+    color:#003d4d; border-radius:16px; text-decoration:none;
+    font-weight:900; font-size:13px; letter-spacing:0.5px;
+    border:1.5px solid rgba(255,255,255,0.65);
+    box-shadow:0 18px 45px rgba(0,200,180,0.55), inset 0 1px 1px rgba(255,255,255,0.9);
+    transition:all 0.3s cubic-bezier(0.16,1,0.3,1);
+}
+.expired-btn:hover { transform:translateY(-4px) scale(1.03); }
+</style>
+</head>
+<body>
+<div class="card">
+    <div class="expired-icon">⏰</div>
+    <div class="expired-title">SESSION HẾT HẠN</div>
+    <div class="expired-text">Vui lòng tạo mã QR mới</div>
+    <a href="/" class="expired-btn">🔄 TẠO QR MỚI</a>
+</div>
+</body>
+</html>
+"""
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5001))
+    app.run(host="0.0.0.0", port=port, debug=False)
