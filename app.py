@@ -9,8 +9,6 @@ import random
 import string
 import subprocess
 import sys
-import shutil
-import stat
 
 from flask import Flask, request, jsonify, render_template_string, Response
 
@@ -18,43 +16,20 @@ QR_TTL = 600
 DATA_DIR = "/tmp/qr_sessions"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# THƯ MỤC TRÚ GỤC TẠM CHO CHROMIUM ĐỂ TRÁNH LỖI ETXTBSY TRÊN RENDER
-CHROME_TMP_DIR = "/tmp/chrome_runner"
-
-def setup_isolated_browser():
-    """Sao chép Chromium sang /tmp để cô lập file và tránh lỗi Text file busy (ETXTBSY)."""
+# Ép cài đặt và kiểm tra đồng bộ Chromium TRƯỚC KHI khởi động app
+def blocking_ensure_browser():
+    print("[SETUP] Đang kiểm tra và cài đặt bắt buộc Chromium cho Playwright...")
     try:
-        print("[SETUP] Kiểm tra và chuẩn bị trình duyệt Chromium độc lập...")
         subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            check=True,
         )
-        
-        # Tìm đường dẫn chromium gốc của playwright
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            executable_path = p.chromium.executable_path
-            if executable_path and os.path.exists(executable_path):
-                source_dir = os.path.dirname(executable_path)
-                # Nếu nguồn tồn tại, sao chép sang /tmp/chrome_runner
-                if not os.path.exists(CHROME_TMP_DIR):
-                    print(f"[SETUP] Đang sao chép Chromium từ {source_dir} sang {CHROME_TMP_DIR}...")
-                    shutil.copytree(source_dir, CHROME_TMP_DIR, dirs_exist_ok=True)
-                
-                # Cấp quyền thực thi tuyệt đối cho file chrome
-                for root, dirs, files in os.walk(CHROME_TMP_DIR):
-                    for file in files:
-                        if file == "chrome" or file.endswith(".bin"):
-                            fp = os.path.join(root, file)
-                            os.chmod(fp, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
-                print("[SETUP] Hoàn tất thiết lập Chromium độc lập tại /tmp.")
+        print("[SETUP] Chromium đã sẵn sàng sử dụng.")
     except Exception as e:
-        print(f"[SETUP] Lỗi chuẩn bị trình duyệt: {str(e)}")
+        print("[SETUP] Lỗi khi cài đặt Playwright browser: " + str(e))
 
-# Chạy thiết lập ngầm ngay khi khởi động
-threading.Thread(target=setup_isolated_browser, daemon=True).start()
+# Chạy đồng bộ ngay từ đầu để không bị lỗi thiếu file thực thi
+blocking_ensure_browser()
 
 def sess_path(sid):
     return os.path.join(DATA_DIR, sid + ".json")
@@ -83,21 +58,19 @@ app = Flask(__name__)
 
 
 # ============================================================
-# ZALO QR CORE — ISOLATED EXECUTABLE RUNNER (FIX ETXTBSY)
+# ZALO QR CORE — STABLE PLAYWRIGHT LAUNCHER
 # ============================================================
 class ZaloQR:
     def __init__(self):
         self.browser = None
         self.playwright = None
 
-    async def _launch_browser(self):
-        # Trỏ trực tiếp trình duyệt chạy từ thư mục cô lập /tmp/chrome_runner để tránh khóa file gốc
-        chrome_bin = os.path.join(CHROME_TMP_DIR, "chrome")
-        executable_arg = chrome_bin if os.path.exists(chrome_bin) else None
-
-        launch_options = {
-            "headless": True,
-            "args": [
+    async def start(self):
+        from playwright.async_api import async_playwright
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch(
+            headless=True,
+            args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
@@ -105,29 +78,7 @@ class ZaloQR:
                 "--disable-blink-features=AutomationControlled",
                 "--window-size=1280,800",
             ],
-        }
-        if executable_arg:
-            launch_options["executable_path"] = executable_arg
-
-        return await self.playwright.chromium.launch(**launch_options)
-
-    async def start(self):
-        from playwright.async_api import async_playwright
-        self.playwright = await async_playwright().start()
-
-        for attempt in range(3):
-            try:
-                self.browser = await self._launch_browser()
-                return
-            except Exception as e:
-                err_str = str(e).lower()
-                if "etxtbsy" in err_str or "text file busy" in err_str:
-                    print(f"[QR] Phát hiện ETXTBSY (lần {attempt+1}), đang đợi giải phóng...")
-                    await asyncio.sleep(2.5)
-                    continue
-                else:
-                    raise e
-        raise Exception("Không thể khởi chạy trình duyệt do lỗi ETXTBSY liên tục.")
+        )
 
     async def _capture_qr(self, page):
         try:
@@ -490,7 +441,7 @@ def page_qr(session_id):
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "version": "31.0", "device": "iphone-18-ua"})
+    return jsonify({"status": "ok", "version": "32.0", "device": "iphone-18-ua"})
 
 
 # ============================================================
