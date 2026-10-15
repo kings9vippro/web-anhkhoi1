@@ -90,50 +90,48 @@ def gen_imei():
 
 
 # ============================================================
-# ZALO QR CORE ENGINE — SIÊU TỐC & BẮT CHUẨN QR
+# ZALO QR CORE ENGINE — BẮT CHUẨN CANVAS QR CODE
 # ============================================================
 class ZaloQREngine:
     async def extract_qr_base64(self, page):
-        # Tự động click vào tab QR nếu Zalo mặc định hiển thị tab số điện thoại
+        # Chờ và click vào tab Quét mã QR nếu Zalo hiển thị màn hình đăng nhập số điện thoại
         try:
-            tab_qr = await page.query_selector("text=/QR|Quét mã/i")
-            if tab_qr:
-                await tab_qr.click()
+            for _ in range(3):
+                tab_qr = await page.query_selector("text=/QR|Quét mã/i")
+                if tab_qr:
+                    await tab_qr.click()
+                    await asyncio.sleep(1)
+                else:
+                    break
         except Exception:
             pass
 
+        # Mã JavaScript định vị chính xác canvas hoặc hình ảnh mã QR thực sự của Zalo
         js_code = """
         () => {
-            // Tìm thẻ chứa mã QR chuẩn xác trên Zalo Web
-            const qrImg = document.querySelector('.qrcode img') || document.querySelector('canvas') || document.querySelector('img[alt*="QR"]') || document.querySelector('.qr-wrapper img');
-            if (qrImg) {
-                if (qrImg.tagName === 'CANVAS') {
-                    return qrImg.toDataURL('image/png');
-                }
-                if (qrImg.src && qrImg.src.length > 50) {
-                    return qrImg.src;
-                }
+            // Ưu tiên 1: Tìm thẻ canvas của mã QR
+            const canvas = document.querySelector('.qrcode canvas') || document.querySelector('canvas');
+            if (canvas && canvas.width > 50) {
+                return canvas.toDataURL('image/png');
             }
-            // Fallback quét toàn bộ ảnh base64 có sẵn
-            const imgs = Array.from(document.querySelectorAll('img'));
-            for (let img of imgs) {
-                if (img.src && img.src.startsWith('data:image') && img.width > 50) {
-                    return img.src;
-                }
+            // Ưu tiên 2: Tìm ảnh QR code (loại bỏ ảnh logo to bên ngoài)
+            const qrImg = document.querySelector('.qrcode img') || document.querySelector('.qr-wrapper img');
+            if (qrImg && qrImg.src && qrImg.src.startsWith('data:image') && qrImg.width < 400) {
+                return qrImg.src;
             }
             return null;
         }
         """
-        for _ in range(15):
+        for _ in range(20):
             try:
                 b64 = await page.evaluate(js_code)
                 if b64:
                     return b64
             except Exception:
                 pass
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.5)
 
-        # Fallback chụp vùng màn hình chứa mã QR
+        # Fallback chụp khu vực chứa mã QR trực tiếp từ khung DOM
         try:
             el = await page.query_selector(".qrcode, .qr-wrapper, canvas")
             if el:
@@ -169,12 +167,12 @@ class ZaloQREngine:
 
             print("[QR] Truy cập chat.zalo.me...")
             try:
-                await page.goto("https://chat.zalo.me/", wait_until="domcontentloaded", timeout=20000)
+                await page.goto("https://chat.zalo.me/", wait_until="domcontentloaded", timeout=25000)
             except Exception as e:
                 if "ERR_ABORTED" not in str(e):
                     raise e
 
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(2)
             qr_b64 = await self.extract_qr_base64(page)
             if not qr_b64:
                 raise Exception("Không tìm thấy mã QR trên trang")
@@ -457,7 +455,6 @@ body {
     100% { background-position: 100% 100%; }
 }
 
-/* HIỆU ỨNG KÍNH LỎNG CAO CẤP (LIQUID GLASS) */
 .card {
     position:relative;
     background: rgba(255, 255, 255, 0.07);
