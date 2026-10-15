@@ -1,11 +1,12 @@
+# render.yaml
 services:
   - type: web
-    name: alb-qr
-    env: python
+    name: concho-memay
+    runtime: docker
+    dockerfilePath: ./Dockerfile
     plan: free
-    buildCommand: pip install -r requirements.txt && python -m playwright install chromium
-    startCommand: python -m playwright install chromium 2>/dev/null || true && gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 300
-    healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
+      - key: PORT
+        value: 5001
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/.cache/ms-playwright
