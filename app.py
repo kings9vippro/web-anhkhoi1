@@ -22,7 +22,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 app = Flask(__name__)
 
 # ============================================================
-# SINGLETON BROWSER ENGINE (TỐI ƯU HÓA TỐC ĐỘ & TIẾT KIỆM RAM)
+# SINGLETON BROWSER ENGINE (TỐI ƯU RAM & TỐC ĐỘ 0s)
 # ============================================================
 GLOBAL_BROWSER = None
 GLOBAL_PLAYWRIGHT = None
@@ -94,11 +94,11 @@ def gen_imei():
 
 
 # ============================================================
-# ZALO QR CORE — TRÍCH XUẤT ĐỒNG BỘ IPHONE 18 PRO MAX (iOS 26.1)
+# ZALO QR CORE — TỐC ĐỘ CAO & NHẬN DIỆN IPHONE 18 PRO MAX
 # ============================================================
 class ZaloQREngine:
     async def extract_qr_lightning(self, page):
-        # Ép chuyển sang tab quét mã QR nếu Zalo hiển thị màn hình đăng nhập số điện thoại
+        # Chuyển ngay sang tab QR nếu Zalo Web mở mặc định tab số điện thoại
         for tab_sel in ["li:has-text('VỚI MÃ QR')", "text=/Mã QR|Quét mã/i", "[data-tab='qr']"]:
             try:
                 btn = await page.wait_for_selector(tab_sel, timeout=1000)
@@ -108,7 +108,7 @@ class ZaloQREngine:
             except Exception:
                 pass
 
-        # Quét siêu tốc dữ liệu Canvas mã QR
+        # Quét siêu tốc thẻ Canvas hoặc hình ảnh QR chuẩn xác từ DOM
         js_scan = """
         async () => {
             for (let i = 0; i < 50; i++) {
@@ -132,7 +132,7 @@ class ZaloQREngine:
         except Exception:
             pass
 
-        # Fallback chụp phần tử chứa mã QR
+        # Fallback chụp phần tử QR
         for sel in [".qrcode canvas", ".qrcode", ".qr-wrapper", "canvas"]:
             try:
                 el = await page.query_selector(sel)
@@ -144,7 +144,6 @@ class ZaloQREngine:
             except Exception:
                 continue
 
-        # Fallback khung hình trung tâm
         png_bytes = await page.screenshot(
             full_page=False,
             clip={"x": 360, "y": 140, "width": 560, "height": 520}
@@ -160,7 +159,7 @@ class ZaloQREngine:
                 except Exception:
                     pass
 
-            # Thiết lập định danh thông số phần cứng hoàn chỉnh của iPhone 18 Pro Max trên iOS 26.1
+            # Thiết lập định danh thông số phần cứng chuẩn iPhone 18 Pro Max trên iOS 26.1
             ctx = await browser.new_context(
                 viewport={"width": 1280, "height": 850},
                 user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
@@ -390,7 +389,7 @@ def page_qr(session_id):
 
 
 # ============================================================
-# GIAO DIỆN KÍNH LỎNG (LIQUID GLASS UI) - NÚT BẤM ĐÀNG HOÀNG
+# GIAO DIỆN KÍNH LỎNG CAO CẤP (LIQUID GLASS UI) - ĐỦ NÚT BẤM
 # ============================================================
 SHARED_CSS = """
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
