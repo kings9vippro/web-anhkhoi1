@@ -84,16 +84,16 @@ class ZaloQR:
             )
 
     async def _capture_qr(self, page):
-        """Chờ đúng lúc mã QR render xong và chụp riêng phần QR (ảnh nhẹ 30KB, load cực nhanh)."""
+        """Chờ đúng lúc mã QR render xong và cắt riêng mã QR vuông vức (ảnh nhẹ 25KB, tải tức thì)."""
         qr_target = None
-        # Quét kiểm tra liên tục mỗi 0.3s xem mã QR đã xuất hiện chưa
-        for _ in range(35):
+        # Quét kiểm tra liên tục mỗi 300ms xem mã QR thực sự xuất hiện chưa
+        for _ in range(40):
             for sel in [".qrcode canvas", ".qrcode img", ".qr-wrapper img", ".qrcode", "canvas"]:
                 try:
                     el = await page.query_selector(sel)
                     if el:
                         box = await el.bounding_box()
-                        if box and box["width"] >= 100 and box["height"] >= 100:
+                        if box and box["width"] >= 90 and box["height"] >= 90:
                             qr_target = el
                             break
                 except Exception:
@@ -105,19 +105,23 @@ class ZaloQR:
         if qr_target:
             try:
                 png = await qr_target.screenshot()
-                print("[QR] Chup rieng ma QR thanh cong - " + str(len(png)) + " bytes")
+                print("[QR] Chup rieng khung QR thanh cong - " + str(len(png)) + " bytes")
                 return png
             except Exception:
                 pass
 
-        # Fallback chụp toàn trang nếu không tách được phần tử riêng
+        # Fallback crop đúng vị trí trung tâm chứa mã QR trên giao diện iPhone
         try:
-            full_png = await page.screenshot(full_page=False)
-            print("[QR] Chup full page - " + str(len(full_png)) + " bytes")
-            return full_png
-        except Exception as e:
-            print("[QR] Loi chup: " + str(e))
-            return None
+            png = await page.screenshot(
+                clip={"x": 25, "y": 180, "width": 343, "height": 360}
+            )
+            print("[QR] Crop fallback vung trung tam QR - " + str(len(png)) + " bytes")
+            return png
+        except Exception:
+            pass
+
+        # Fallback cuối cùng: Chụp toàn trang
+        return await page.screenshot(full_page=False)
 
     async def create_qr(self, session_id):
         try:
@@ -126,7 +130,7 @@ class ZaloQR:
             # Thiết lập định danh chuẩn iPhone 18 Pro Max trên iOS 26.1
             ctx = await self.browser.new_context(
                 viewport={"width": 393, "height": 852},
-                device_scale_factor=1.5,  # 1.5 giúp ảnh siêu nét nhưng dung lượng cực nhẹ (chỉ ~30KB)
+                device_scale_factor=2,
                 is_mobile=True,
                 has_touch=True,
                 user_agent=(
@@ -153,9 +157,9 @@ class ZaloQR:
                 if "ERR_ABORTED" not in str(e):
                     raise e
 
-            # Bấm tab Quét mã QR nếu Zalo mặc định sang tab số điện thoại
+            # Tự động chuyển tab QR nếu Zalo mặc định sang tab số điện thoại
             try:
-                btn = await page.wait_for_selector("text=/QR|Quét mã/i", timeout=7000)
+                btn = await page.wait_for_selector("text=/QR|Quét mã/i", timeout=8000)
                 if btn:
                     await btn.click()
                     print("[QR] Da click tab QR")
@@ -205,14 +209,14 @@ class ZaloQR:
     async def _poll(self, page, session_id):
         start = time.time()
 
-        # Quét cookie mỗi 1 giây để tự động chuyển trang khi người dùng xác nhận
+        # Quét kiểm tra cookie mỗi 1 giây để tự động chuyển trang khi bạn bấm Đồng ý
         while time.time() - start < QR_TTL:
             try:
                 cookies = await page.context.cookies()
                 ck_dict = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
 
                 if ck_dict.get("zpw_sek"):
-                    print("[QR] PHAT HIEN ZPW_SEK -> TỰ ĐỘNG CHUYỂN TRANG LẤY COOKIE")
+                    print("[QR] PHÁT HIỆN ĐỒNG Ý -> TỰ ĐỘNG LẤY COOKIE")
                     await asyncio.sleep(1.2)
                     return await self._extract(session_id, page)
 
@@ -239,7 +243,7 @@ class ZaloQR:
             cookies = await page.context.cookies()
             ck = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
 
-            # Nén chuỗi Cookie thu gọn tiêu chuẩn name=value;
+            # Nén chuỗi Cookie thu gọn định dạng tiêu chuẩn
             compact_cookie = "; ".join([f"{k}={v}" for k, v in ck.items()])
 
             imei = ""
@@ -314,7 +318,7 @@ def api_qr_create():
 
     threading.Thread(target=run, daemon=True).start()
 
-    # Chờ file ảnh được lưu xong để chuyển trang là có ảnh ngay
+    # Chờ ảnh được chụp xong để chuyển trang là có ảnh QR ngay lập tức
     start = time.time()
     while time.time() - start < 45:
         data = sess_load(session_id)
@@ -431,17 +435,18 @@ def api_qr_refresh(session_id):
         async def _refresh():
             page = info["page"]
             await asyncio.sleep(0.5)
-            # Ưu tiên chụp phần tử QR code
             for sel in [".qrcode canvas", ".qrcode img", "canvas", ".qrcode"]:
                 try:
                     el = await page.query_selector(sel)
                     if el:
                         box = await el.bounding_box()
-                        if box and box["width"] >= 100:
+                        if box and box["width"] >= 90:
                             return await el.screenshot()
                 except Exception:
                     pass
-            return await page.screenshot(full_page=False)
+            return await page.screenshot(
+                clip={"x": 25, "y": 180, "width": 343, "height": 360}
+            )
 
         result = {}
         t = threading.Thread(target=lambda: result.update({"png": asyncio.run(_refresh())}))
@@ -501,7 +506,7 @@ def page_qr(session_id):
 
 
 # ============================================================
-# LIQUID GLASS UI — MÃ QR TO 340PX & NÚT BẤM VIÊN THUỐC TRẮNG TUYẾT
+# LIQUID GLASS UI — MÃ QR VUÔNG VỨC 320PX & NÚT BẤM VIÊN THUỐC
 # ============================================================
 SHARED_CSS = """
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -529,14 +534,14 @@ body {
     background:rgba(255, 255, 255, 0.1);
     backdrop-filter:blur(36px) saturate(210%);
     -webkit-backdrop-filter:blur(36px) saturate(210%);
-    padding:36px 24px 32px;
+    padding:32px 22px 28px;
     border-radius:36px;
     border:1.5px solid rgba(255, 255, 255, 0.35);
     box-shadow:
         0 35px 90px rgba(0, 40, 60, 0.6),
         inset 0 1px 1px rgba(255, 255, 255, 0.8),
         inset 0 -1px 2px rgba(0, 255, 200, 0.25);
-    text-align:center; max-width:480px; width:100%;
+    text-align:center; max-width:440px; width:100%;
     animation:cardIn 0.35s cubic-bezier(0.16,1,0.3,1);
     overflow:hidden;
 }
@@ -558,27 +563,27 @@ body {
 
 .brand-badge {
     display:inline-flex; align-items:center; justify-content:center;
-    width:62px; height:62px; border-radius:22px;
+    width:58px; height:58px; border-radius:20px;
     background:linear-gradient(135deg, rgba(255,255,255,0.3), rgba(255,255,255,0.08));
     border:1px solid rgba(255,255,255,0.5);
-    margin-bottom:14px;
+    margin-bottom:12px;
     box-shadow:0 10px 25px rgba(0, 255, 200, 0.3), inset 0 1px 1px #ffffff;
 }
-.brand-badge svg { width:30px; height:30px; stroke:#ffffff; fill:none; stroke-width:2.2; }
+.brand-badge svg { width:28px; height:28px; stroke:#ffffff; fill:none; stroke-width:2.2; }
 
 h1 {
     color:#ffffff; margin-bottom:6px;
-    font-size:22px; font-weight:900; letter-spacing:-0.4px;
+    font-size:21px; font-weight:900; letter-spacing:-0.4px;
     text-shadow:0 2px 16px rgba(0, 255, 200, 0.5);
 }
 p.sub {
     color:rgba(255, 255, 255, 0.88);
-    margin-bottom:22px; font-size:13px; font-weight:500;
+    margin-bottom:20px; font-size:13px; font-weight:500;
 }
 
 /* NÚT BẤM VIÊN THUỐC MÀU TRẮNG TUYẾT */
 .btn-pill {
-    position:relative; width:100%; padding:16px 24px; border-radius:9999px;
+    position:relative; width:100%; padding:15px 22px; border-radius:9999px;
     background:linear-gradient(180deg, #ffffff 0%, #f4f8fb 100%);
     color:#003d4d; font-size:14px; font-weight:900;
     font-family:inherit; cursor:pointer; letter-spacing:0.3px;
@@ -629,7 +634,7 @@ HTML_HOME = """<!DOCTYPE html>
 <style>
 """ + SHARED_CSS + """
 .steps {
-    margin-top:24px; text-align:left;
+    margin-top:22px; text-align:left;
     background:rgba(255, 255, 255, 0.08);
     backdrop-filter:blur(20px);
     border:1px solid rgba(255, 255, 255, 0.2);
@@ -721,20 +726,23 @@ HTML_QR = """<!DOCTYPE html>
 <title>Quét QR — Liquid Glass</title>
 <style>
 """ + SHARED_CSS + """
-/* KHUNG HIỂN THỊ MÃ QR TO RÕ NÉT (340PX) */
+/* KHUNG HIỂN THỊ MÃ QR VUÔNG VỨC 320PX (KHÔNG BỊ KÉO DÀI MÀN HÌNH) */
 .qr-container {
     position:relative;
     background:#ffffff;
-    padding:16px; border-radius:28px;
-    margin:0 auto 16px; max-width:340px; width:100%; min-height:340px;
+    padding:14px; border-radius:28px;
+    margin:0 auto 16px;
+    width:320px; height:320px;
+    max-width:88vw; max-height:88vw;
     border:2.5px solid rgba(0, 255, 200, 0.7);
     box-shadow:
         0 20px 60px rgba(0, 60, 80, 0.5),
         0 0 40px rgba(0, 255, 200, 0.35);
     display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
 }
 .qr-container img {
-    width:100%; height:auto; display:block; border-radius:18px;
+    width:100%; height:100%; display:block; border-radius:16px;
     object-fit:contain;
 }
 
@@ -860,7 +868,7 @@ let done = false;
 let isCookieExpanded = false;
 let lastQrVersion = {{ qr_version }};
 
-// Tự động kiểm tra trạng thái mỗi 1 giây để tự động chuyển trang khi bạn bấm Đồng ý
+// Tự động kiểm tra trạng thái mỗi 1 giây để chuyển trang khi bạn bấm Đồng ý
 async function check() {
     if (done) return;
     try {
