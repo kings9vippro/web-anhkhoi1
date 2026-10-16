@@ -22,7 +22,7 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 app = Flask(__name__)
 
 # ============================================================
-# SINGLETON BROWSER ENGINE (DESKTOP RUNNER — CỰC KỲ TIẾT KIỆM RAM)
+# SINGLETON BROWSER ENGINE (TỐI ƯU HÓA TỐC ĐỘ & TIẾT KIỆM RAM)
 # ============================================================
 GLOBAL_BROWSER = None
 GLOBAL_PLAYWRIGHT = None
@@ -74,7 +74,7 @@ def sess_save(sid, data):
         with open(sess_path(sid), "w", encoding="utf-8") as f:
             json.dump(data, f)
     except Exception as e:
-        print("[SESS] Lỗi lưu session: " + str(e))
+        print("[SESS] Save error: " + str(e))
 
 
 def sess_load(sid):
@@ -94,64 +94,57 @@ def gen_imei():
 
 
 # ============================================================
-# ZALO QR CORE — LẤY BẰNG MÁY TÍNH & GẮN ĐỊNH DANH IPHONE 18 PRO MAX
+# ZALO QR CORE — TRÍCH XUẤT ĐỒNG BỘ IPHONE 18 PRO MAX (iOS 26.1)
 # ============================================================
 class ZaloQREngine:
-    async def extract_qr_foolproof(self, page):
-        """Trích xuất mã QR đa tầng, chống hoàn toàn lỗi không lấy được ảnh."""
-        # 1. Chuyển sang tab Mã QR nếu đang ở tab Số điện thoại
+    async def extract_qr_lightning(self, page):
+        # Ép chuyển sang tab quét mã QR nếu Zalo hiển thị màn hình đăng nhập số điện thoại
         for tab_sel in ["li:has-text('VỚI MÃ QR')", "text=/Mã QR|Quét mã/i", "[data-tab='qr']"]:
             try:
-                btn = await page.wait_for_selector(tab_sel, timeout=1200)
+                btn = await page.wait_for_selector(tab_sel, timeout=1000)
                 if btn:
                     await btn.click()
                     break
             except Exception:
                 pass
 
-        # 2. Quét liên tục thẻ Canvas hoặc ảnh QR gốc từ DOM của Zalo
-        js_code = """
-        () => {
-            // Tìm thẻ canvas của mã QR (Zalo Web render QR bằng canvas)
-            const canvases = Array.from(document.querySelectorAll('canvas'));
-            for (let c of canvases) {
-                if (c.width >= 80 && c.height >= 80) {
-                    try { return c.toDataURL('image/png'); } catch(e){}
+        # Quét siêu tốc dữ liệu Canvas mã QR
+        js_scan = """
+        async () => {
+            for (let i = 0; i < 50; i++) {
+                const canvas = document.querySelector('.qrcode canvas') || document.querySelector('.qr-container canvas') || document.querySelector('canvas');
+                if (canvas && canvas.width >= 100 && canvas.height >= 100) {
+                    try { return canvas.toDataURL('image/png'); } catch(e){}
                 }
-            }
-            // Tìm thẻ ảnh mã QR thật (bỏ qua logo thương hiệu)
-            const imgs = Array.from(document.querySelectorAll('.qrcode img, .qr-wrapper img, img'));
-            for (let img of imgs) {
-                if (img.src && img.src.startsWith('data:image') && img.width >= 80 && !img.src.includes('logo')) {
-                    return img.src;
+                const qrImg = document.querySelector('.qrcode img') || document.querySelector('.qr-wrapper img');
+                if (qrImg && qrImg.src && qrImg.src.startsWith('data:image') && qrImg.width >= 100) {
+                    return qrImg.src;
                 }
+                await new Promise(r => setTimeout(r, 100));
             }
             return null;
         }
         """
+        try:
+            b64 = await page.evaluate(js_scan)
+            if b64 and len(b64) > 200:
+                return b64
+        except Exception:
+            pass
 
-        for _ in range(16):
-            try:
-                b64 = await page.evaluate(js_code)
-                if b64 and len(b64) > 200:
-                    return b64
-            except Exception:
-                pass
-            await asyncio.sleep(0.25)
-
-        # 3. Fallback: Chụp trực tiếp vùng phần tử QR
+        # Fallback chụp phần tử chứa mã QR
         for sel in [".qrcode canvas", ".qrcode", ".qr-wrapper", "canvas"]:
             try:
                 el = await page.query_selector(sel)
                 if el:
                     box = await el.bounding_box()
-                    if box and box["width"] >= 80 and box["height"] >= 80:
+                    if box and box["width"] >= 100 and box["height"] >= 100:
                         png_bytes = await el.screenshot()
                         return "data:image/png;base64," + base64.b64encode(png_bytes).decode("utf-8")
             except Exception:
                 continue
 
-        # 4. Fallback cuối cùng: Chụp khung giữa trang (đảm bảo không bao giờ ném lỗi rỗng)
+        # Fallback khung hình trung tâm
         png_bytes = await page.screenshot(
             full_page=False,
             clip={"x": 360, "y": 140, "width": 560, "height": 520}
@@ -167,17 +160,16 @@ class ZaloQREngine:
                 except Exception:
                     pass
 
-            # Sử dụng User-Agent máy tính chuẩn để Zalo mở thẳng khung QR không bị chặn
+            # Thiết lập định danh thông số phần cứng hoàn chỉnh của iPhone 18 Pro Max trên iOS 26.1
             ctx = await browser.new_context(
                 viewport={"width": 1280, "height": 850},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 26_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.1 Mobile/15E148 Safari/604.1",
                 locale="vi-VN",
                 timezone_id="Asia/Ho_Chi_Minh",
             )
             page = await ctx.new_page()
 
         try:
-            # Chặn video/font để tải trang tức thì trong 1s
             await page.route(
                 "**/*",
                 lambda route: route.abort()
@@ -188,19 +180,17 @@ class ZaloQREngine:
 
             await page.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
+                Object.defineProperty(navigator, 'vendor', { get: () => 'Apple Computer, Inc.' });
                 window.chrome = { runtime: {} };
             """)
 
-            # Truy cập trực tiếp cổng đăng nhập tài khoản Zalo để giảm bớt chuyển hướng
             try:
-                await page.goto("https://id.zalo.me/account?continue=https%3A%2F%2Fchat.zalo.me%2F", wait_until="domcontentloaded", timeout=12000)
+                await page.goto("https://chat.zalo.me/", wait_until="domcontentloaded", timeout=15000)
             except Exception:
-                try:
-                    await page.goto("https://chat.zalo.me/", wait_until="domcontentloaded", timeout=8000)
-                except Exception:
-                    pass
+                pass
 
-            qr_b64 = await self.extract_qr_foolproof(page)
+            qr_b64 = await self.extract_qr_lightning(page)
 
             sess_save(session_id, {
                 "status": "waiting",
@@ -232,7 +222,6 @@ class ZaloQREngine:
 
     async def _poll(self, page, session_id):
         start = time.time()
-        # Quét nhanh mỗi 0.4s để nhận diện ngay khi bạn bấm Đồng ý trên điện thoại
         while time.time() - start < QR_TTL:
             try:
                 cookies = await page.context.cookies()
@@ -247,7 +236,7 @@ class ZaloQREngine:
             except Exception:
                 pass
 
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.3)
 
         data = sess_load(session_id) or {}
         data["status"] = "expired"
@@ -256,11 +245,9 @@ class ZaloQREngine:
 
     async def _extract(self, session_id, page):
         try:
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.5)
             cookies = await page.context.cookies()
             ck_dict = {c["name"]: c["value"] for c in cookies if "zalo" in c.get("domain", "")}
-
-            # Nén chuỗi Cookie thu gọn định dạng name=value;
             compact_cookie = "; ".join([f"{k}={v}" for k, v in ck_dict.items()])
 
             imei = ""
@@ -327,8 +314,7 @@ def api_qr_create():
 
     threading.Thread(target=run, daemon=True).start()
 
-    # Chờ tối đa 8 giây để mã QR tạo xong và trả ngay về JSON
-    ready_event.wait(timeout=8)
+    ready_event.wait(timeout=6)
     SESSION_EVENTS.pop(session_id, None)
 
     data = sess_load(session_id) or {}
@@ -369,7 +355,7 @@ def api_qr_refresh(session_id):
 
         async def _refresh():
             page = info["page"]
-            return await engine.extract_qr_foolproof(page)
+            return await engine.extract_qr_lightning(page)
 
         result = {}
         t = threading.Thread(target=lambda: result.update({"b64": asyncio.run(_refresh())}))
@@ -404,7 +390,7 @@ def page_qr(session_id):
 
 
 # ============================================================
-# GIAO DIỆN KÍNH LỎNG (LIQUID GLASS UI)
+# GIAO DIỆN KÍNH LỎNG (LIQUID GLASS UI) - NÚT BẤM ĐÀNG HOÀNG
 # ============================================================
 SHARED_CSS = """
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -479,7 +465,7 @@ p.sub {
     margin-bottom:22px; font-size:13px; font-weight:500;
 }
 
-/* NÚT BẤM VIÊN THUỐC MÀU TRẮNG TUYẾT */
+/* NÚT BẤM VIÊN THUỐC MÀU TRẮNG TUYẾT CAO CẤP */
 .btn-pill {
     position:relative; width:100%; padding:16px 24px; border-radius:9999px;
     background:linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
@@ -568,7 +554,7 @@ HTML_HOME = """<!DOCTYPE html>
     </div>
 
     <h1>MÃ ĐĂNG NHẬP ZALO</h1>
-    <p class="sub">Tạo mã QR tức thì & Định danh iPhone 18 Pro Max (iOS 26.1)</p>
+    <p class="sub">Tạo mã QR siêu tốc & Nhận diện iPhone 18 Pro Max (iOS 26.1)</p>
 
     <button id="btn-start" class="btn-pill" onclick="startQR()">
         <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
@@ -583,7 +569,7 @@ HTML_HOME = """<!DOCTYPE html>
             Quy trình tức thì
         </div>
         <div class="guide-item"><span class="guide-badge">1</span> Bấm Khởi tạo mã QR</div>
-        <div class="guide-item"><span class="guide-badge">2</span> Mã QR hiển thị to rõ chỉ trong 1 - 2 giây</div>
+        <div class="guide-item"><span class="guide-badge">2</span> Mã QR hiển thị to rõ chỉ trong 1 giây</div>
         <div class="guide-item"><span class="guide-badge">3</span> Điện thoại quét mã & xác nhận đăng nhập</div>
         <div class="guide-item"><span class="guide-badge">4</span> Web tự động chuyển sang trang lấy Cookie & IMEI</div>
     </div>
@@ -604,7 +590,7 @@ async function startQR() {
             btn.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg><span>SẴN SÀNG</span>';
             setTimeout(() => { window.location.href = d.qr_url; }, 80);
         } else {
-            alert('Lỗi: ' + (d.error || 'Không rõ nguyên nhân'));
+            alert('Lỗi: ' + (d.error || 'Không rõ'));
             btn.disabled = false;
             btn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg><span>KHỞI TẠO MÃ QR</span>';
         }
@@ -777,13 +763,12 @@ function renderQR(src) {
     img.src = src;
 }
 
-// Kiểm tra bộ nhớ đệm trước để hiển thị tức thì trong 0ms nếu có sẵn
 const cachedQR = sessionStorage.getItem('qr_' + sessionId);
 if (cachedQR) {
     renderQR(cachedQR);
 }
 
-// Tần số quét 400ms để bắt token tức thì khi bạn bấm Đồng ý
+// Quét liên tục mỗi 350ms để bắt sự kiện đăng nhập khi bấm Đồng ý
 async function check() {
     if (done) return;
     try {
@@ -924,7 +909,7 @@ function showToast(msg) {
     setTimeout(() => { t.remove(); }, 2000);
 }
 
-setInterval(check, 400);
+setInterval(check, 350);
 check();
 </script>
 </body>
